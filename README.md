@@ -143,18 +143,25 @@ All errors use the OpenAI error envelope. Per the provider convention, 4xx respo
 
 ### Cross-compiled releases
 
+Release tags are `v<version>` (e.g. `v0.1.0`); the version stamped everywhere drops the `v` (`0.1.0`).
+
 ```sh
-just release   # build/release/<version>/{linux,darwin}-{amd64,arm64}.tar.gz + SHA256SUMS
+git tag v0.1.0 && git push origin v0.1.0   # the release workflow publishes the GitHub Release
+just release   # local equivalent: build/release/<version>/proxy-<version>-{linux,darwin}-{amd64,arm64}.tar.gz + SHA256SUMS
 ```
 
-Each tarball carries a single static, version-stamped `proxy` binary (CGO off, `-trimpath`); verify with `sha256sum -c SHA256SUMS`. These assets are what the npm package downloads at install time.
+Each tarball carries a single static, version-stamped `proxy` binary (CGO off, `-trimpath`); verify with `sha256sum -c SHA256SUMS`. These assets are what the npm package downloads at install time, from `releases/download/v<version>/`. CI cross-compiles the same four targets on every push.
 
 ### npm package release
 
+Once the tag's GitHub Release exists, from a clean checkout of that tag:
+
 ```sh
-just npm-release   # dist/@s3p1r0o-snoopy-<npm version>.tgz + SHA256SUMS
-npm publish dist/*.tgz   # with your npm identity; the version stamps the Go release to fetch
+just npm-release   # dist/@s3p1r0o-snoopy-<version>.tgz + SHA256SUMS (refuses a dirty or untagged HEAD)
+npm publish dist/*.tgz   # with your npm identity; publishConfig makes the scoped package public
 ```
+
+The tag version becomes the npm package version, which tells the launcher which release assets to fetch (override with `SNOOPY_PROXY_VERSION`).
 
 ### Docker
 
@@ -170,6 +177,9 @@ docker run --rm -p 8081:8081 snoopy tui           # terminal UI over an attached
 # Proxy alone (as before):
 docker build --target proxy -t snoopy:proxy . 
 docker run --rm -p 8081:8081 snoopy:proxy --key my-key
+
+# Multi-arch (linux/amd64 + linux/arm64) through buildx; push to a registry:
+just docker-buildx <registry>/snoopy linux/amd64,linux/arm64 --push   # tags <registry>/snoopy:<version>
 ```
 
 Notes:
@@ -220,7 +230,7 @@ With `/etc/snoopy-proxy/env` holding environment overrides (e.g. `RILL_ADMIN_URL
 
 ## Development
 
-Common tasks are in the `justfile` (`just --list` for the menu): `just build`, `just lint`, `just test` (Go), `just node-test`, `just check`, `just run [flags]`, `just docker-build`, `just docker-run`, `just harness [mode]`, `just release`, `just npm-release`.
+Common tasks are in the `justfile` (`just --list` for the menu): `just build`, `just lint`, `just test` (Go), `just node-test`, `just check`, `just run [flags]`, `just docker-build`, `just docker-buildx`, `just docker-run`, `just harness [mode]`, `just release`, `just npm-release`.
 
 - `cd proxy && go test ./...` — handler tests in `proxy/serve_test.go`, wire-format tests pinned against generated-stub bytes in `proxy/wire_test.go`.
 - `staticcheck ./...` should stay clean (CI enforces build, vet, staticcheck, gofmt, race tests; plus Node-side syntax checks and `npm test`).

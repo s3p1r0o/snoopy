@@ -4,8 +4,11 @@
 #     the Go proxy + DeepSeek Harness (dsh, official Node build) supervised by
 #     the launcher; OpenAI endpoint and Web UI exposed.
 #   - --target proxy: the proxy alone on a distroless base (as before).
-# Pinned by digests; update deliberately.
-FROM golang:1.26@sha256:52d57e3542f28ad72e9a1084e209366d8ca6af04997636134c138d16702a70a6 AS build-go
+# Pinned by digests (multi-arch image indexes); update deliberately.
+# Multi-arch: `docker buildx build --platform linux/amd64,linux/arm64` (or
+# `just docker-buildx`). The Go stage runs on the build host and
+# cross-compiles to TARGETOS/TARGETARCH; the later stages run per target.
+FROM --platform=$BUILDPLATFORM golang:1.26@sha256:52d57e3542f28ad72e9a1084e209366d8ca6af04997636134c138d16702a70a6 AS build-go
 ARG TARGETOS TARGETARCH
 ARG VERSION=unknown
 WORKDIR /src

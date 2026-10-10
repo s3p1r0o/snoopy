@@ -13,7 +13,8 @@
 //   SNOOPY_PROXY_BIN    path to a pre-built proxy binary (skips download)
 //   SNOOPY_RELEASE_URL_PREFIX   base URL for proxy tarball downloads
 //                       (the asset host: GitHub Releases of s3p1r0o/snoopy — the repo also hosts them until its rename lands, then redirects)
-//   SNOOPY_PROXY_VERSION release version to download (default: baked at publish time)
+//   SNOOPY_PROXY_VERSION release version to download (default: the package version,
+//                       stamped from the release tag by `just npm-release`)
 //   SNOOPY_PORT        fixed port for the proxy (default: first free ≥ 8307)
 //   DSH_HOME            custom dsh home (default: XDG data dir/snoopy/dsh)
 //   SNOOPY_PROXY_KEY  fixed bearer key instead of the ephemeral one
@@ -33,7 +34,9 @@ const PKG_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'
 const require = createRequire(import.meta.url)
 
 const manifest = JSON.parse(readFileSync(path.join(PKG_ROOT, 'package.json'), 'utf8'))
-const RELEASE_VERSION = process.env.SNOOPY_PROXY_VERSION || manifest.release?.version || manifest.version
+// Release convention: git tag `v<version>`, assets `proxy-<version>-<os>-<arch>`
+// (no `v`); a `v`-prefixed override is tolerated.
+const RELEASE_VERSION = (process.env.SNOOPY_PROXY_VERSION || manifest.version).replace(/^v/, '')
 const RELEASE_URL_PREFIX =
   process.env.SNOOPY_RELEASE_URL_PREFIX ||
   `https://github.com/s3p1r0o/snoopy/releases/download/v${RELEASE_VERSION}`
@@ -106,7 +109,11 @@ function xdgDataHome() {
   return process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local', 'share')
 }
 
-/** Write the bundled web+headless profiles under dshHome unless already present. */
+/**
+ * Write the bundled web+headless profiles under dshHome unless already present;
+ * an existing profile only gets its proxy baseURL retargeted at this launch's
+ * port (the free port can change between boots), other edits are kept.
+ */
 function ensureDshProfile(dshHome, port) {
   for (const profileName of ['web', 'headless']) {
     const profiles = path.join(dshHome, 'profiles')
@@ -117,6 +124,13 @@ function ensureDshProfile(dshHome, port) {
       mkdirSync(path.dirname(patch), { recursive: true })
       writeFileSync(patch, template.replaceAll('{{PROXY_PORT}}', String(port)))
       log(`profile written to ${patch}`)
+      continue
+    }
+    const current = readFileSync(patch, 'utf8')
+    const updated = current.replace(/(baseURL:\s*http:\/\/127\.0\.0\.1:)\d+(\/v1)/g, `$1${port}$2`)
+    if (updated !== current) {
+      writeFileSync(patch, updated)
+      log(`profile ${profileName}: proxy port set to ${port}`)
     }
   }
 }

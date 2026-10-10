@@ -1,0 +1,55 @@
+name: release
+
+# Pushing a tag v<version> builds the proxy tarballs (`just release`) and
+# publishes them, with SHA256SUMS, as the GitHub Release the npm launcher
+# downloads from (releases/download/v<version>/proxy-<version>-<os>-<arch>.tar.gz).
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  proxy-assets:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # create the release and upload its assets
+    steps:
+      # actions/checkout v5.1.0
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          fetch-depth: 0 # git describe needs the tags
+          persist-credentials: false
+
+      # actions/setup-go v6.5.0
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+        with:
+          go-version-file: proxy/go.mod
+          cache: false # no shared cache in a job holding a write token
+
+      - name: Install just
+        run: sudo apt-get update && sudo apt-get install -y just
+
+      - name: Build release tarballs
+        run: just release
+
+      # The justfile strips the tag's `v` and any character outside
+      # [A-Za-z0-9._-]; a tag that does not survive that unchanged fails here
+      # rather than shipping assets the launcher cannot find.
+      - name: Check assets match the tag
+        run: |
+          dir="build/release/${GITHUB_REF_NAME#v}"
+          if [ ! -f "$dir/SHA256SUMS" ]; then
+            echo "expected $dir/SHA256SUMS for tag $GITHUB_REF_NAME; got:"; ls build/release
+            exit 1
+          fi
+          (cd "$dir" && sha256sum -c SHA256SUMS)
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          dir="build/release/${GITHUB_REF_NAME#v}"
+          gh release create "$GITHUB_REF_NAME" "$dir"/*.tar.gz "$dir/SHA256SUMS" \
+            --repo "$GITHUB_REPOSITORY" --verify-tag --title "$GITHUB_REF_NAME" --generate-notes

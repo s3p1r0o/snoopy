@@ -2,9 +2,11 @@
 # Layout: npm package (root, @s3p1r0o/snoopy) + Go proxy (proxy/).
 
 # Toolchain version, stamped into the binary, the Docker image and the npm
-# package. Stripped down to [A-Za-z0-9._-] so a crafted tag name cannot inject
-# sh syntax anywhere.
-version := `v=$(git describe --tags --dirty --always 2>/dev/null); [ -n "$v" ] && echo "$v" | tr -cd '[:alnum:]._-' || echo dev`
+# package. Release tags are `v<version>`; the leading `v` is dropped here, so
+# tag v0.1.0 gives version 0.1.0 and assets proxy-0.1.0-<os>-<arch>.tar.gz.
+# Stripped down to [A-Za-z0-9._-] so a crafted tag name cannot inject sh syntax
+# anywhere.
+version := `v=$(git describe --tags --dirty --always 2>/dev/null); [ -n "$v" ] && echo "${v#v}" | tr -cd '[:alnum:]._-' || echo dev`
 
 # Default recipe: show the menu.
 default:
@@ -40,6 +42,14 @@ run *flags:
 docker-build:
     docker build --build-arg VERSION={{version}} -t snoopy:{{version}} .
 
+# Multi-arch build through buildx (the Go stage cross-compiles natively; the
+# Node stage runs under QEMU for foreign arches, so binfmt must be installed).
+# A multi-platform result cannot be loaded into the classic image store: pass
+# --push (with a registry image name) or an --output.
+# Usage: just docker-buildx ghcr.io/<owner>/snoopy linux/amd64,linux/arm64 --push
+docker-buildx image="snoopy" platforms="linux/amd64,linux/arm64" *flags:
+    docker buildx build --platform {{platforms}} --build-arg VERSION={{version}} -t {{image}}:{{version}} {{flags}} .
+
 # Smoke-test the Docker image on loopback 127.0.0.1:18081/healthz, then `docker stop`.
 docker-run *flags:
     docker run --rm -d --name snoopy-smoke -p 127.0.0.1:18081:8081 snoopy:{{version}} {{flags}}
@@ -72,13 +82,22 @@ release:
     ls -la "$release_dir"
 
 # Assemble the npm package @s3p1r0o/snoopy (launcher + bundled
-# profile) into dist/ as a .tgz ready for publication. The Go release version
-# (git describe) is stamped into the package so its launcher downloads the
-# matching release assets.
+# profile) into dist/ as a .tgz ready for publication. The release version
+# (tag v<version>) becomes the package version, which the launcher uses to
+# download the matching release assets. Only a clean, tagged HEAD qualifies:
+# any other version has no GitHub Release behind it. package.json is stamped
+# for the pack only and restored afterwards, so the tree stays clean.
 npm-release:
     #!/usr/bin/env sh
     set -eu
-    node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('package.json','utf8'));p.release.version='{{version}}';fs.writeFileSync('package.json',JSON.stringify(p,null,2)+'\n')"
+    case "{{version}}" in *-dirty) echo "npm-release: working tree is dirty ({{version}})" >&2; exit 1 ;; esac
+    if ! git describe --tags --exact-match >/dev/null 2>&1; then
+        echo "npm-release: HEAD is not a release tag (v<version>); tag and push it first" >&2
+        exit 1
+    fi
+    cp package.json package.json.orig
+    trap 'mv package.json.orig package.json' EXIT
+    node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('package.json','utf8'));p.version='{{version}}';fs.writeFileSync('package.json',JSON.stringify(p,null,2)+'\n')"
     rm -rf dist
     mkdir -p dist
     npm pack --pack-destination dist/

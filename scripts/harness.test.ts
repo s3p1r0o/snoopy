@@ -3,6 +3,10 @@
 
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
+import { ensureDshProfile } from '../bin/launcher.js'
 import { type NodeCandidate, parseNodeVersion, pickNode } from '../lib/node-select.js'
 
 test('parseNodeVersion extracts a leading version from a `node -v` payload', () => {
@@ -41,4 +45,33 @@ test('pickNode orders versions numerically, not lexicographically', () => {
     { path: '/usr/node', version: '20.3.1', official: false },
   ]
   assert.deepEqual(pickNode(candidates), candidates[1])
+})
+test('ensureDshProfile writes the bundled profiles with the proxy port on first boot', () => {
+  const home = mkdtempSync(path.join(os.tmpdir(), 'snoopy-profile-'))
+  try {
+    ensureDshProfile(home, 8307)
+    for (const name of ['web', 'headless']) {
+      const patch = readFileSync(path.join(home, 'profiles', name, 'cordis.patch.yml'), 'utf8')
+      assert.match(patch, /baseURL: http:\/\/127\.0\.0\.1:8307\/v1/)
+      assert.doesNotMatch(patch, /\{\{PROXY_PORT\}\}/)
+    }
+  } finally {
+    rmSync(home, { recursive: true, force: true })
+  }
+})
+
+test('ensureDshProfile retargets an existing profile at the new port and keeps user edits', () => {
+  const home = mkdtempSync(path.join(os.tmpdir(), 'snoopy-profile-'))
+  try {
+    ensureDshProfile(home, 8307)
+    const patch = path.join(home, 'profiles', 'web', 'cordis.patch.yml')
+    writeFileSync(patch, readFileSync(patch, 'utf8') + '# user edit\n')
+    ensureDshProfile(home, 8312)
+    const updated = readFileSync(patch, 'utf8')
+    assert.match(updated, /baseURL: http:\/\/127\.0\.0\.1:8312\/v1/)
+    assert.doesNotMatch(updated, /:8307\//)
+    assert.match(updated, /# user edit\n$/)
+  } finally {
+    rmSync(home, { recursive: true, force: true })
+  }
 })

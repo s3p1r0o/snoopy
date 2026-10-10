@@ -23,7 +23,12 @@ function ensureProxyBinary(): string {
   if (existsSync(bin)) return bin
   const go = spawnSync('go', ['version'], { encoding: 'utf8' })
   if (go.error) throw new Error('no proxy binary and no Go toolchain to build one (run: just build)')
-  spawnSync('go', ['build', '-o', bin, '.'], { cwd: ROOT, stdio: 'inherit' })
+  // The Go module lives in proxy/, not at the repo root.
+  const build = spawnSync('go', ['build', '-o', bin, '-ldflags', '-X main.version=dev', '.'], {
+    cwd: path.join(ROOT, 'proxy'),
+    stdio: 'inherit',
+  })
+  if (build.status !== 0) throw new Error('proxy build failed (see go output above; or run: just build)')
   return bin
 }
 

@@ -3,7 +3,9 @@
   "version": "0.1.0",
   "description": "Snoopy: a DeepSeek Harness (dsh) standalone kit — embeds the proxy Go module so dsh talks to the Rill assistant through a localhost-only, ephemeral-key OpenAI-compatible endpoint.",
   "license": "MIT",
-  "private": true,
+  "publishConfig": {
+    "access": "public"
+  },
   "type": "module",
   "bin": {
     "snoopy": "bin/launcher.js"
@@ -33,8 +35,5 @@
   "cpu": [
     "x64",
     "arm64"
-  ],
-  "release": {
-    "version": "07c5795-dirty"
-  }
+  ]
 }
