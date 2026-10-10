@@ -4,10 +4,11 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { openspecShim, resolveOpenspec, skillsEnv, skillsMode, writeOpenspecShim } from '../lib/skills.js'
+import { assembleSkills, bundledName, parseFrontmatter, renderNotice, rewriteSkillReferences } from './skills-sync.js'
 
 const PKG_ROOT = path.join(import.meta.dirname, '..')
 const BUNDLED = path.join(PKG_ROOT, 'skills', 'bundled')
@@ -92,4 +93,88 @@ test('the shim runs the bundled OpenSpec CLI', () => {
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
+})
+
+const skillMd = (name: string, body = '') => `---\nname: ${name}\ndescription: "Use when testing ${name}"\n---\n${body}\n`
+
+/** A fake upstream checkout: { 'a/SKILL.md': '...' } under a fresh dir. */
+function fixture(files: Record<string, string>): string {
+  const root = tmp()
+  for (const [rel, content] of Object.entries(files)) {
+    mkdirSync(path.dirname(path.join(root, rel)), { recursive: true })
+    writeFileSync(path.join(root, rel), content)
+  }
+  return root
+}
+
+test('bundledName keeps the last path segment', () => {
+  assert.equal(bundledName('engineering/domain-modeling'), 'domain-modeling')
+  assert.equal(bundledName('brainstorming'), 'brainstorming')
+})
+
+test('rewriteSkillReferences strips the superpowers prefix for bundled skills only', () => {
+  const known = new Set(['writing-plans', 'test-driven-development'])
+  const cited = new Set(['writing-skills'])
+  assert.deepEqual(rewriteSkillReferences('Use superpowers:writing-plans, then superpowers:test-driven-development.', known, cited),
+    { text: 'Use writing-plans, then test-driven-development.', unknown: [] })
+  assert.deepEqual(rewriteSkillReferences('see (superpowers:writing-skills)', known, cited),
+    { text: 'see (superpowers:writing-skills)', unknown: [] })
+  assert.deepEqual(rewriteSkillReferences('superpowers:nope and superpowers:nope', known, cited).unknown, ['nope'])
+})
+
+test('parseFrontmatter reads name and description, quoted or not', () => {
+  assert.deepEqual(parseFrontmatter(skillMd('x')), { name: 'x', description: 'Use when testing x' })
+  assert.deepEqual(parseFrontmatter("---\nname: 'y'\ndescription: plain text\n---\n"), { name: 'y', description: 'plain text' })
+  assert.equal(parseFrontmatter('no frontmatter'), null)
+})
+
+test('assembleSkills copies the selected skills, rewrites references and drops agents/', () => {
+  const up = fixture({
+    'skills/plan/SKILL.md': skillMd('plan', 'Then use superpowers:tdd.'),
+    'skills/plan/scripts/run.sh': 'echo superpowers:tdd\n',
+    'skills/tdd/SKILL.md': skillMd('tdd'),
+    'skills/tdd/agents/openai.yaml': 'x: 1\n',
+    'skills/unselected/SKILL.md': skillMd('unselected'),
+  })
+  const out = path.join(tmp(), 'bundled')
+  try {
+    assembleSkills([{ id: 'up', root: path.join(up, 'skills'), skills: ['plan', 'tdd'] }], out)
+    assert.deepEqual(readdirSync(out).sort(), ['plan', 'tdd'])
+    assert.match(readFileSync(path.join(out, 'plan', 'SKILL.md'), 'utf8'), /Then use tdd\./)
+    assert.equal(readFileSync(path.join(out, 'plan', 'scripts', 'run.sh'), 'utf8'), 'echo tdd\n')
+    assert.equal(existsSync(path.join(out, 'tdd', 'agents')), false)
+  } finally {
+    rmSync(up, { recursive: true, force: true })
+    rmSync(path.dirname(out), { recursive: true, force: true })
+  }
+})
+
+test('assembleSkills fails, leaving the output untouched, on any problem', () => {
+  const cases: [string, Record<string, string>, string[], RegExp][] = [
+    ['missing skill', { 'a/SKILL.md': skillMd('a') }, ['a', 'b'], /b\/SKILL\.md not found/],
+    ['unknown reference', { 'a/SKILL.md': skillMd('a', 'superpowers:ghost') }, ['a'], /outside the catalog: ghost/],
+    ['name mismatch', { 'a/SKILL.md': skillMd('other') }, ['a'], /name: a/],
+    ['duplicate name', { 'x/a/SKILL.md': skillMd('a'), 'y/a/SKILL.md': skillMd('a') }, ['x/a', 'y/a'], /duplicate skill name: a/],
+  ]
+  for (const [label, files, skills, error] of cases) {
+    const up = fixture(files)
+    const out = path.join(tmp(), 'bundled')
+    mkdirSync(path.join(out, 'previous'), { recursive: true })
+    try {
+      assert.throws(() => assembleSkills([{ id: 'up', root: up, skills }], out), error, label)
+      assert.deepEqual(readdirSync(out), ['previous'], label)
+    } finally {
+      rmSync(up, { recursive: true, force: true })
+      rmSync(path.dirname(out), { recursive: true, force: true })
+    }
+  }
+})
+
+test('renderNotice lists every source with its pin, licence file and skills', () => {
+  const notice = renderNotice({ sources: [
+    { id: 'superpowers', git: 'https://github.com/obra/superpowers', ref: 'v6.4.1', commit: '5bf4e78011075bcfc0dc295f0724994cd123ee71', license: 'MIT', skills: ['brainstorming'] },
+    { id: 'openspec', npm: '@fission-ai/openspec', version: '1.14.1', license: 'MIT', skills: ['openspec-explore'] },
+  ] })
+  assert.match(notice, /\| \[superpowers\]\(https:\/\/github\.com\/obra\/superpowers\) \| v6\.4\.1 \(`5bf4e78`\) \| MIT, `LICENSES\/superpowers\.txt` \| brainstorming \|/)
+  assert.match(notice, /\| \[@fission-ai\/openspec\]\(https:\/\/www\.npmjs\.com\/package\/@fission-ai\/openspec\) \| 1\.14\.1 \| MIT, `LICENSES\/openspec\.txt` \| openspec-explore \|/)
 })

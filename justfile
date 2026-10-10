@@ -30,6 +30,10 @@ test:
 node-test:
     npm test
 
+# Refresh skills/bundled/ from the pinned sources in skills/catalog.json (network).
+skills-sync:
+    node scripts/skills-sync.js
+
 # Build, lint and test: everything a commit should survive.
 check: build lint test
 
