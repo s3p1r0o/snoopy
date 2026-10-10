@@ -26,3 +26,16 @@
 - id: plugin-manager
   config:
     pnpmCommand: !!js process.env.SNOOPY_PNPM ?? 'pnpm'
+
+# dsh-web-app adds two prompt sections meant for dsh's own monorepo: it names
+# the directory four levels above its install "the DeepSeek Harness
+# implementation checkout" (in a snoopy install, that is snoopy's repo or the
+# global npm tree, not dsh's source) and describes the dsh dev watcher
+# (pnpm run dev:web, apps/web). Both are false here: surfaceContext off drops
+# them. A patch replaces the whole config, so the other fields are restated.
+- id: web-runtime
+  config:
+    openBrowser: !!js ctx.webStartup.openBrowser
+    printUrl: true
+    surfaceContext: false
+    trustedHosts: !!js ctx.webStartup.trustedHosts
