@@ -15,6 +15,7 @@ import { existsSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import path from 'node:path'
 import process from 'node:process'
+import { installAgentsMd, systemPromptEnv } from '../lib/agent-prompt.js'
 import { mcpConfigEnv } from '../lib/mcp-config.js'
 import { collectNodeCandidates, pickNode } from '../lib/node-select.js'
 import { agentPresetFromEnv, overlayEnv, proxyOverlayArgs, resolvePnpm, searchEngineSpec, selfImproveEnabled, webToolsSpec } from '../lib/profiles.js'
@@ -73,7 +74,7 @@ async function main(argv: string[]): Promise<void> {
   }
   const proxy = spawn(proxyBin, ['--port', String(port), '--address', '127.0.0.1'], {
     stdio: proxyStdio(process.env), // access logs only with SNOOPY_PROXY_LOG=1
-    env: { ...process.env, RILL_PROXY_KEY: proxyKey, RILL_WEB_TOOLS: webToolsSpec(process.env), RILL_SEARCH_ENGINE: searchEngineSpec(process.env), ...mcpConfigEnv(process.env) },
+    env: { ...process.env, RILL_PROXY_KEY: proxyKey, RILL_WEB_TOOLS: webToolsSpec(process.env), RILL_SEARCH_ENGINE: searchEngineSpec(process.env), ...mcpConfigEnv(process.env), ...systemPromptEnv(process.env) },
   })
   try {
     await waitProxyReady(port, proxyKey, proxy)
@@ -82,6 +83,9 @@ async function main(argv: string[]): Promise<void> {
     throw err
   }
   console.error(`[snoopy] proxy ready: http://127.0.0.1:${port}/v1 (loopback, ephemeral bearer key)`)
+
+  const dshHome = path.join(ROOT, '.dsh')
+  installAgentsMd(dshHome, process.env, msg => console.error(`[snoopy] ${msg}`)) // the global working rules, see lib/agent-prompt.js
 
   // Same routing overlay as the published launcher; .dsh itself is local state.
   const agentPreset = agentPresetFromEnv(process.env)
@@ -93,7 +97,7 @@ async function main(argv: string[]): Promise<void> {
     // satisfies it and authenticates against the proxy's bearer check.
     env: {
       ...process.env,
-      DSH_HOME: path.join(ROOT, '.dsh'),
+      DSH_HOME: dshHome,
       ...overlayEnv(process.env, {
         port,
         nodePath: chosen.path,

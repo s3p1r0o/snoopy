@@ -12,6 +12,7 @@ import { firstFreePort } from '../bin/launcher.js'
 import { portIsFree, proxyStdio, waitProxyReady } from '../lib/proxy-ready.js'
 import { embeddedSearxngDir, searxngSettings, startSearxng } from '../lib/searxng.js'
 import { EMPTY_PROFILE_PATCH, LEGACY_PROFILE_PATCHES, MIGRATIONS, migrateDshHome } from '../lib/migrations.js'
+import { AGENTS_MD_MARKER, DEFAULT_AGENTS_MD, DEFAULT_SYSTEM_PROMPT, installAgentsMd, systemPromptEnv } from '../lib/agent-prompt.js'
 import { mcpConfigEnv, mcpConfigMode } from '../lib/mcp-config.js'
 import { agentPresetFromEnv, overlayEnv, PROXY_PROFILES, proxyOverlayArgs, resolvePnpm, searchEngineSpec, selfImproveEnabled, webToolsSpec } from '../lib/profiles.js'
 import { type NodeCandidate, parseNodeVersion, pickNode } from '../lib/node-select.js'
@@ -429,4 +430,68 @@ test('mcpConfigEnv points the proxy at the default config; explicit stays the pr
   }
   assert.deepEqual(mcpConfigEnv({ RILL_MCP_CONFIG: '/mine.json' }), {})
   assert.deepEqual(mcpConfigEnv({ SNOOPY_MCP: 'no' }), {})
+})
+
+test('systemPromptEnv hands the proxy the default prompt unless opted out; an explicit RILL_SYSTEM_PROMPT wins', () => {
+  const def = systemPromptEnv({})
+  assert.deepEqual(Object.keys(def), ['RILL_SYSTEM_PROMPT'])
+  assert.equal(def.RILL_SYSTEM_PROMPT, DEFAULT_SYSTEM_PROMPT)
+  assert.match(DEFAULT_SYSTEM_PROMPT, /rill-assistant/)
+  // The proxy reads an explicit prompt itself: the launcher adds nothing.
+  assert.deepEqual(systemPromptEnv({ RILL_SYSTEM_PROMPT: 'mine' }), {})
+  assert.deepEqual(systemPromptEnv({ RILL_SYSTEM_PROMPT: 'mine', SNOOPY_SYSTEM_PROMPT: '0' }), {})
+  for (const off of ['0', 'false', 'off', 'no', ' OFF ']) {
+    assert.deepEqual(systemPromptEnv({ SNOOPY_SYSTEM_PROMPT: off }), {}, off)
+  }
+  // Whitespace only is not an explicit prompt.
+  assert.deepEqual(systemPromptEnv({ RILL_SYSTEM_PROMPT: '  ' }), def)
+})
+
+test('installAgentsMd keeps $DSH_HOME/AGENTS.md managed, backs up a user file once, and honours SNOOPY_AGENTS_MD=0', () => {
+  const home = mkdtempSync(path.join(os.tmpdir(), 'snoopy-agents-'))
+  const target = path.join(home, 'AGENTS.md')
+  const lines: string[] = []
+  const log = (msg: string) => lines.push(msg)
+  try {
+    // First launch: written, starting with the managed marker.
+    assert.deepEqual(installAgentsMd(home, {}, log), { action: 'written' })
+    const content = readFileSync(target, 'utf8')
+    assert.ok(content.startsWith(AGENTS_MD_MARKER + '\n'), content.slice(0, 120))
+    assert.equal(content, DEFAULT_AGENTS_MD)
+    // Same content: no write.
+    assert.deepEqual(installAgentsMd(home, {}, log), { action: 'unchanged' })
+    // An older managed version is replaced (snoopy owns the file).
+    writeFileSync(target, AGENTS_MD_MARKER + '\nolder default\n')
+    assert.deepEqual(installAgentsMd(home, {}, log), { action: 'written' })
+    assert.equal(readFileSync(target, 'utf8'), DEFAULT_AGENTS_MD)
+    // A file without the marker is the user's: backed up, then replaced, with one log line.
+    writeFileSync(target, '# my own global rules\n')
+    const result = installAgentsMd(home, {}, log)
+    assert.equal(result.action, 'written')
+    assert.ok(result.backup && path.basename(result.backup).startsWith('AGENTS.md.bak-'), String(result.backup))
+    assert.equal(readFileSync(result.backup!, 'utf8'), '# my own global rules\n')
+    assert.equal(readFileSync(target, 'utf8'), DEFAULT_AGENTS_MD)
+    assert.equal(lines.filter(l => l.includes(result.backup!)).length, 1, lines.join('\n'))
+    // Opted out: the file is left exactly as it is, even a user's own.
+    writeFileSync(target, '# my own global rules\n')
+    for (const off of ['0', 'false', 'off', 'no']) {
+      assert.deepEqual(installAgentsMd(home, { SNOOPY_AGENTS_MD: off }, log), { action: 'off' }, off)
+    }
+    assert.equal(readFileSync(target, 'utf8'), '# my own global rules\n')
+    // No leftover temporary files.
+    assert.deepEqual(readdirSync(home).filter(f => f.includes('.tmp')), [])
+  } finally {
+    rmSync(home, { recursive: true, force: true })
+  }
+})
+
+test('installAgentsMd creates a missing dsh home', () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), 'snoopy-agents-'))
+  try {
+    const home = path.join(root, 'snoopy', 'dsh')
+    assert.deepEqual(installAgentsMd(home, {}, () => {}), { action: 'written' })
+    assert.ok(existsSync(path.join(home, 'AGENTS.md')))
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
 })

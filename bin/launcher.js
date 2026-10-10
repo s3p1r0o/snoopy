@@ -30,6 +30,7 @@ import process from 'node:process'
 import { randomBytes, createHash } from 'node:crypto'
 import { createRequire } from 'node:module'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+import { installAgentsMd, systemPromptEnv } from '../lib/agent-prompt.js'
 import { mcpConfigEnv } from '../lib/mcp-config.js'
 import { migrateDshHome } from '../lib/migrations.js'
 import { collectNodeCandidates, pickNode } from '../lib/node-select.js'
@@ -184,7 +185,7 @@ async function main(argv) {
   }
   const proxy = spawn(proxyBin, ['--port', String(port), '--address', proxyAddress], {
     stdio: proxyStdio(process.env), // access logs only with SNOOPY_PROXY_LOG=1
-    env: { ...proxyEnv, RILL_PROXY_KEY: proxyKey, RILL_WEB_TOOLS: webToolsSpec(proxyEnv), RILL_SEARCH_ENGINE: searchEngineSpec(proxyEnv), ...mcpConfigEnv(proxyEnv) },
+    env: { ...proxyEnv, RILL_PROXY_KEY: proxyKey, RILL_WEB_TOOLS: webToolsSpec(proxyEnv), RILL_SEARCH_ENGINE: searchEngineSpec(proxyEnv), ...mcpConfigEnv(proxyEnv), ...systemPromptEnv(proxyEnv) },
   })
   process.on('exit', () => proxy.kill('SIGTERM'))
   try {
@@ -197,6 +198,7 @@ async function main(argv) {
 
   const dshHome = process.env.DSH_HOME || path.join(xdgDataHome(), 'snoopy', 'dsh')
   migrateDshHome(dshHome, log)
+  installAgentsMd(dshHome, process.env, log) // the global working rules, see lib/agent-prompt.js
 
   const agentPreset = agentPresetFromEnv(process.env)
   const dshArgs = proxyOverlayArgs(argv, path.join(PKG_ROOT, 'profile'), { selfImprove: selfImproveEnabled(process.env), agentPreset })
