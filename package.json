@@ -1,0 +1,40 @@
+{
+  "name": "@s3p1r0o/snoopy",
+  "version": "0.1.0",
+  "description": "Snoopy: a DeepSeek Harness (dsh) standalone kit — embeds the proxy Go module so dsh talks to the Rill assistant through a localhost-only, ephemeral-key OpenAI-compatible endpoint.",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "snoopy": "bin/launcher.js"
+  },
+  "scripts": {
+    "harness": "node bin/harness.ts",
+    "start": "npm run harness",
+    "test": "node --test scripts/harness.test.ts",
+    "postinstall": "node bin/postinstall.js"
+  },
+  "files": [
+    "bin/launcher.js",
+    "bin/postinstall.js",
+    "lib/node-select.js",
+    "profile/"
+  ],
+  "dependencies": {
+    "@deepseek-ai/dsh": "0.2.0-rc.2"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "os": [
+    "linux",
+    "darwin"
+  ],
+  "cpu": [
+    "x64",
+    "arm64"
+  ],
+  "release": {
+    "version": "07c5795-dirty"
+  }
+}

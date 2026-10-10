@@ -1,0 +1,12 @@
+/openai-proxy
+node_modules/
+build/
+dist/
+bin/openai-proxy
+bin/proxy
+.dsh/.anonymous-user-id
+.dsh/sessions/
+.dsh/logs/
+.dsh/.credentials.yaml
+.dsh/storages/
+.dsh/profiles/*/.plugin-manager/

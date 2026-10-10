@@ -1,0 +1,21 @@
+# Bundled web profile for @s3p1r0o/snoopy: the embedded proxy is
+# the only provider route and the sessions' default model. {{PROXY_PORT}} is
+# substituted by the launcher at first boot.
+- id: llm-pi-ai
+  config:
+    providers:
+      proxy:
+        apiKeyEnv: SNOOPY_PROXY_KEY
+        api: openai-completions
+        baseURL: http://127.0.0.1:{{PROXY_PORT}}/v1
+        models:
+          - id: rill-assistant
+            name: rill-assistant (Rill via the embedded proxy)
+            contextWindow: 272000
+            maxTokens: 32768
+            input: [text]
+
+- id: agent-default-model
+  config:
+    provider: proxy
+    model: rill-assistant

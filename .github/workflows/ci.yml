@@ -1,0 +1,47 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      # actions/checkout v5.1.0
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+
+      # actions/setup-go v6.5.0
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+        with:
+          go-version-file: go.mod
+
+      - name: Check Go formatting
+        working-directory: proxy
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "gofmt needed on: $unformatted"; exit 1
+          fi
+
+      - run: go build ./...
+        working-directory: proxy
+      - run: go vet ./...
+        working-directory: proxy
+
+      - name: staticcheck
+        working-directory: proxy
+        run: go run honnef.co/go/tools/cmd/staticcheck@v0.8.1 ./...
+
+      - run: go test -race ./...
+        working-directory: proxy
+
+      - name: Node side (launcher + package syntax)
+        run: |
+          node --check bin/launcher.js
+          node --check bin/postinstall.js
+          npm test

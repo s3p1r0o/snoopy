@@ -1,0 +1,25 @@
+# DeepSeek Harness profile "web" (DSH_HOME=.dsh): model routing rooted on this
+# repository's embedded proxy. The provider speaks OpenAI Chat Completions and
+# the proxy validates an api key only when one was passed at boot.
+- id: llm-pi-ai
+  config:
+    providers:
+      proxy:
+        apiKeyEnv: SNOOPY_PROXY_KEY
+        api: openai-completions
+        baseURL: http://127.0.0.1:8081/v1
+        models:
+          - id: rill-assistant
+            name: rill-assistant (Rill via the embedded proxy)
+            contextWindow: 272000
+            maxTokens: 32768
+            input: [ text ]
+
+- id: agent-default-model
+  config:
+    provider: proxy
+    model: rill-assistant
+- id: ui-settings-general
+  name: "@deepseek-ai/dsh-client-ui-settings-general"
+  config:
+    welcomeNoticeVersion: 2026-09-28.1

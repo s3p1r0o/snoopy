@@ -1,0 +1,6 @@
+.git
+.github
+openai-proxy
+*.md
+Dockerfile
+.dockerignore
