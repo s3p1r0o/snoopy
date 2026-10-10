@@ -227,3 +227,18 @@ test('the sync runs OpenSpec with telemetry and update checks off', () => {
   assert.equal(env.OPENSPEC_NO_UPDATE_CHECK, '1')
   assert.equal(env.PATH, '/usr/bin')
 })
+
+test('skillsEnv puts an absolute directory on PATH even for a relative dsh home', () => {
+  const root = tmp()
+  const cwd = process.cwd()
+  try {
+    process.chdir(root)
+    const env = skillsEnv({}, PKG_ROOT, { dshHome: '.dsh', nodePath: '/n', path: '/usr/bin', openspecEntry: '/e.js' })
+    const first = env.PATH.split(path.delimiter)[0]
+    assert.ok(path.isAbsolute(first), first)
+    assert.equal(first, path.join(root, '.dsh', 'bin'))
+  } finally {
+    process.chdir(cwd)
+    rmSync(root, { recursive: true, force: true })
+  }
+})
