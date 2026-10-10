@@ -39,20 +39,20 @@ func TestParseWebTools(t *testing.T) {
 }
 
 func TestNewWebTools(t *testing.T) {
-	if wt, err := newWebTools("none", "", "", "", nil); wt != nil || err != nil {
+	if wt, err := newWebTools("none", "", "", "", nil, nil); wt != nil || err != nil {
 		t.Fatalf("none: %v %v", wt, err)
 	}
-	wt, err := newWebTools("all", "", "", "", nil)
+	wt, err := newWebTools("all", "", "", "", nil, nil)
 	if err != nil || strings.Join(toolNames(wt.offered()), ",") != "web_fetch,web_crawl" {
 		t.Fatalf("all without engine: %v %v", wt, err)
 	}
 	if !wt.owned[toolWebSearch] {
 		t.Fatal("all must own web_search even without an engine, to hide the client's")
 	}
-	if _, err := newWebTools("search,fetch", "", "", "", nil); err == nil || !strings.Contains(err.Error(), "needs a search engine") {
+	if _, err := newWebTools("search,fetch", "", "", "", nil, nil); err == nil || !strings.Contains(err.Error(), "needs a search engine") {
 		t.Fatalf("explicit search without engine: err = %v", err)
 	}
-	wt, err = newWebTools("search", "", "http://127.0.0.1:8888", "", nil)
+	wt, err = newWebTools("search", "", "http://127.0.0.1:8888", "", nil, nil)
 	if err != nil || strings.Join(toolNames(wt.offered()), ",") != "web_search" {
 		t.Fatalf("search with searxng: %v %v", wt, err)
 	}

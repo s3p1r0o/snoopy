@@ -80,6 +80,7 @@ func runServe(args []string, stdout, stderr io.Writer) {
 	webToolsSpec := fs.String("web-tools", envDefault("RILL_WEB_TOOLS", ""), "Server-side web tools run for the model: all, none, or a comma list of search,fetch,crawl (default none)")
 	searchEngine := fs.String("search-engine", envDefault("RILL_SEARCH_ENGINE", ""), "web_search backend: searxng or brave (default: whichever is configured; Brave reads BRAVE_SEARCH_API_KEY)")
 	searxngURL := fs.String("searxng-url", envDefault("RILL_SEARXNG_URL", ""), "SearXNG base URL for web_search (its JSON format must be enabled)")
+	mcpConfig := fs.String("mcp-config", envDefault("RILL_MCP_CONFIG", ""), "JSON file declaring MCP servers (mcpServers, stdio command or type http); their tools are run server-side")
 	showVersion := fs.Bool("version", false, "Print the version and exit")
 	_ = fs.Parse(args)
 
@@ -98,12 +99,33 @@ func runServe(args []string, stdout, stderr io.Writer) {
 		maxInputTokens: *maxInputTokens,
 	}
 
-	web, err := newWebTools(*webToolsSpec, *searchEngine, *searxngURL, os.Getenv("BRAVE_SEARCH_API_KEY"), stdout)
+	mcpMgr, err := startMCPServers(*mcpConfig, stdout)
+	if err != nil {
+		fatalf(stderr, "%v", err)
+	}
+	web, err := newWebTools(*webToolsSpec, *searchEngine, *searxngURL, os.Getenv("BRAVE_SEARCH_API_KEY"), stdout, mcpMgr)
 	if err != nil {
 		fatalf(stderr, "%v", err)
 	}
 	cfg.web = web
-	if names := toolNames(web.offered()); len(names) > 0 {
+	if names := toolNames(mcpMgr.defs()); len(names) > 0 {
+		fmt.Fprintf(stdout, "MCP tools run by the proxy: %s.\n", strings.Join(names, ", "))
+	}
+	// The startup "Web tools" line lists the proxy's own tools only; MCP
+	// tools get their own line below.
+	names := make([]string, 0)
+	mcpSet := map[string]bool{}
+	if mcpMgr != nil {
+		for name := range mcpMgr.tools {
+			mcpSet[name] = true
+		}
+	}
+	for _, name := range toolNames(web.offered()) {
+		if !mcpSet[name] {
+			names = append(names, name)
+		}
+	}
+	if len(names) > 0 {
 		fmt.Fprintf(stdout, "Web tools run by the proxy: %s.\n", strings.Join(names, ", "))
 	}
 

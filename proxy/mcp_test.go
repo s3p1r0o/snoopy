@@ -253,3 +253,41 @@ func TestMCPTruncationCollisionIgnored(t *testing.T) {
 		t.Fatalf("log = %q", log.String())
 	}
 }
+
+func TestWebToolsOfferMCPTools(t *testing.T) {
+	m := newTestManager(t, mcpTestServer())
+	w := &webTools{owned: map[string]bool{}, mcp: m}
+	seen := map[string]bool{}
+	for _, def := range w.offered() {
+		switch def.Name {
+		case "test__echo", "test__boom":
+			seen[def.Name] = true
+		default:
+			t.Errorf("unexpected offered tool %q", def.Name)
+		}
+	}
+	if !seen["test__echo"] || !seen["test__boom"] {
+		t.Fatalf("offered = %v", seen)
+	}
+	// The model's call to an MCP tool runs through the loop's run/dispatch,
+	// with the TOOL log line the other server-side tools get.
+	log := &bytes.Buffer{}
+	w.log = log
+	out := w.run(context.Background(), &ToolCall{ID: "t1", Name: "test__echo", Input: `{"text":"hi"}`})
+	if !strings.Contains(out, "untrusted") || !strings.Contains(out, "echoed: hi") {
+		t.Fatalf("run output = %q", out)
+	}
+	if !strings.Contains(log.String(), "TOOL test__echo") {
+		t.Fatalf("log = %q", log.String())
+	}
+}
+
+func TestWebToolsMCPUnknownTool(t *testing.T) {
+	// A call the loop knows nothing about still answers unknown tool —
+	// with the MCP manager attached too.
+	w := &webTools{owned: map[string]bool{}, mcp: &mcpManager{log: &bytes.Buffer{}}}
+	out := w.run(context.Background(), &ToolCall{ID: "t2", Name: "noSuch", Input: "{}"})
+	if !strings.Contains(out, "failed") && !strings.Contains(out, "unknown") {
+		t.Fatalf("run output = %q", out)
+	}
+}

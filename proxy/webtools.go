@@ -50,7 +50,8 @@ type webTools struct {
 	owned   map[string]bool // tool names the proxy owns (requested with --web-tools)
 	engine  searchEngine    // nil: web_search cannot run
 	fetcher *fetcher
-	log     io.Writer // one access-log line per tool run; nil: silent
+	mcp     *mcpManager // the declared MCP servers' tools; nil: MCP is off
+	log     io.Writer   // one access-log line per tool run; nil: silent
 }
 
 // offered returns the owned tools the proxy can run, in a stable order.
@@ -64,6 +65,8 @@ func (w *webTools) offered() []Tool {
 			out = append(out, webToolDefs[name])
 		}
 	}
+	// The MCP servers' tools ride in the same loop, same round budget.
+	out = append(out, w.mcp.defs()...)
 	return out
 }
 
@@ -236,7 +239,15 @@ func (w *webTools) dispatch(ctx context.Context, call *ToolCall) (out, target st
 		}
 		return untrustedNote + out, args.URL, nil
 	}
-	return "", "", fmt.Errorf("unknown tool %q", call.Name)
+	// Not a web tool: if MCP is on, the call goes to the managers' tools.
+	if w.mcp == nil {
+		return "", "", fmt.Errorf("unknown tool %q", call.Name)
+	}
+	mcpOut, mcpRunErr := w.mcp.run(ctx, call.Name, call.Input)
+	if mcpRunErr != nil {
+		return "", "", fmt.Errorf("unknown tool %q", call.Name)
+	}
+	return mcpOut, call.Name, nil
 }
 
 // parseWebTools reads --web-tools: "" or "none", "all", or a comma list of search, fetch, crawl.
@@ -264,10 +275,14 @@ func parseWebTools(spec string) (map[string]bool, error) {
 // newWebTools builds the web tools --web-tools asks for, or nil when it asks
 // for none. An explicit "search" needs a configured engine; "all" runs
 // web_search only when one is configured.
-func newWebTools(spec, engineKind, searxngURL, braveKey string, log io.Writer) (*webTools, error) {
+func newWebTools(spec, engineKind, searxngURL, braveKey string, log io.Writer, mcp *mcpManager) (*webTools, error) {
 	owned, err := parseWebTools(spec)
-	if err != nil || len(owned) == 0 {
+	if err != nil {
+		// A bad --web-tools spec is an error however many MCP servers run.
 		return nil, err
+	}
+	if mcp == nil && len(owned) == 0 {
+		return nil, nil
 	}
 	engine, err := newSearchEngine(engineKind, searxngURL, braveKey)
 	if err != nil {
@@ -277,7 +292,12 @@ func newWebTools(spec, engineKind, searxngURL, braveKey string, log io.Writer) (
 	if engine == nil && explicit {
 		return nil, fmt.Errorf("web tool search needs a search engine: set --searxng-url (RILL_SEARXNG_URL) or BRAVE_SEARCH_API_KEY")
 	}
-	return &webTools{owned: owned, engine: engine, fetcher: newFetcher(false), log: log}, nil
+	if mcp != nil {
+		for name := range mcp.tools {
+			owned[name] = true
+		}
+	}
+	return &webTools{owned: owned, engine: engine, fetcher: newFetcher(false), mcp: mcp, log: log}, nil
 }
 
 // toolNames lists tool names, for messages.
