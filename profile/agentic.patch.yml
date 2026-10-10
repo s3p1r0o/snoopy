@@ -1,0 +1,14 @@
+# Snoopy's defaults for agentic development, layered by the launchers with
+# `--patch` after the routing patch of every proxy-routed profile (web,
+# headless, acp).
+#
+# dsh's clock (dsh-time-context, shipped with dsh but mounted by no profile):
+# the model gets the current date and time, at most every 10 minutes, in the
+# browser's zone or the machine's. Without a browser (headless, acp) it is told
+# to ask about otherwise-unqualified dates and times. To turn it off, add to
+# the profile's cordis.patch.yml:
+#   - id: time-context
+#     disabled: true
+- insert:
+    - id: time-context
+      name: '@deepseek-ai/dsh-time-context'

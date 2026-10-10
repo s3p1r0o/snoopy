@@ -59,17 +59,18 @@ const PKG_PROFILE_DIR = path.join(import.meta.dirname, '..', 'profile')
 
 const overlay = (name: string) => ['--patch', path.join(PKG_PROFILE_DIR, `${name}.patch.yml`)]
 const SELF_IMPROVE = overlay('self-improve')
+const AGENTIC = overlay('agentic')
 
 test('proxyOverlayArgs layers the packaged routing and self-improvement after the profile name', () => {
   const on = { selfImprove: true }
-  assert.deepEqual(proxyOverlayArgs(['acp'], PKG_PROFILE_DIR, on), ['acp', ...overlay('acp'), ...SELF_IMPROVE])
-  assert.deepEqual(proxyOverlayArgs(['web', '--no-open'], PKG_PROFILE_DIR, on), ['web', ...overlay('web'), ...SELF_IMPROVE, '--no-open'])
-  assert.deepEqual(proxyOverlayArgs(['--profile', 'headless', 'task'], PKG_PROFILE_DIR, on), ['--profile', 'headless', ...overlay('headless'), ...SELF_IMPROVE, 'task'])
-  assert.deepEqual(proxyOverlayArgs(['--profile=acp'], PKG_PROFILE_DIR, on), ['--profile=acp', ...overlay('acp'), ...SELF_IMPROVE])
+  assert.deepEqual(proxyOverlayArgs(['acp'], PKG_PROFILE_DIR, on), ['acp', ...overlay('acp'), ...AGENTIC, ...SELF_IMPROVE])
+  assert.deepEqual(proxyOverlayArgs(['web', '--no-open'], PKG_PROFILE_DIR, on), ['web', ...overlay('web'), ...AGENTIC, ...SELF_IMPROVE, '--no-open'])
+  assert.deepEqual(proxyOverlayArgs(['--profile', 'headless', 'task'], PKG_PROFILE_DIR, on), ['--profile', 'headless', ...overlay('headless'), ...AGENTIC, ...SELF_IMPROVE, 'task'])
+  assert.deepEqual(proxyOverlayArgs(['--profile=acp'], PKG_PROFILE_DIR, on), ['--profile=acp', ...overlay('acp'), ...AGENTIC, ...SELF_IMPROVE])
 })
 
 test('proxyOverlayArgs keeps the routing but drops self-improvement when opted out', () => {
-  assert.deepEqual(proxyOverlayArgs(['acp', 'x'], PKG_PROFILE_DIR, { selfImprove: false }), ['acp', ...overlay('acp'), 'x'])
+  assert.deepEqual(proxyOverlayArgs(['acp', 'x'], PKG_PROFILE_DIR, { selfImprove: false }), ['acp', ...overlay('acp'), ...AGENTIC, 'x'])
 })
 
 test('proxyOverlayArgs leaves other invocations alone', () => {
@@ -110,11 +111,16 @@ test('SNOOPY_AGENT_PRESET names the default agent preset; creator is the UI name
 test('the agent-preset patch only layers onto web, the profile with presets, and only when asked', () => {
   const preset = ['--patch', path.join(PKG_PROFILE_DIR, 'agent-preset.patch.yml')]
   const options = { selfImprove: false, agentPreset: 'cordis' }
-  assert.deepEqual(proxyOverlayArgs(['web', '--no-open'], PKG_PROFILE_DIR, options), ['web', ...overlay('web'), ...preset, '--no-open'])
-  assert.deepEqual(proxyOverlayArgs(['acp'], PKG_PROFILE_DIR, options), ['acp', ...overlay('acp')])
-  assert.deepEqual(proxyOverlayArgs(['web'], PKG_PROFILE_DIR, { selfImprove: false, agentPreset: undefined }), ['web', ...overlay('web')])
+  assert.deepEqual(proxyOverlayArgs(['web', '--no-open'], PKG_PROFILE_DIR, options), ['web', ...overlay('web'), ...AGENTIC, ...preset, '--no-open'])
+  assert.deepEqual(proxyOverlayArgs(['acp'], PKG_PROFILE_DIR, options), ['acp', ...overlay('acp'), ...AGENTIC])
+  assert.deepEqual(proxyOverlayArgs(['web'], PKG_PROFILE_DIR, { selfImprove: false, agentPreset: undefined }), ['web', ...overlay('web'), ...AGENTIC])
   const patch = readFileSync(path.join(PKG_PROFILE_DIR, 'agent-preset.patch.yml'), 'utf8')
   assert.match(patch, /- id: agent-preset-registry\n\s+config:\n\s+default: !!js process\.env\.SNOOPY_AGENT_PRESET/)
+})
+
+test('the agentic patch, layered for every proxy-routed profile, mounts dsh\'s clock', () => {
+  const patch = readFileSync(path.join(PKG_PROFILE_DIR, 'agentic.patch.yml'), 'utf8')
+  assert.match(patch, /- insert:\n\s+- id: time-context\n\s+name: '@deepseek-ai\/dsh-time-context'/)
 })
 
 test('resolvePnpm finds the bundled, executable pnpm', () => {
