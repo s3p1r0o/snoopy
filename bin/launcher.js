@@ -30,6 +30,7 @@ import process from 'node:process'
 import { randomBytes, createHash } from 'node:crypto'
 import { createRequire } from 'node:module'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+import { mcpConfigEnv } from '../lib/mcp-config.js'
 import { migrateDshHome } from '../lib/migrations.js'
 import { collectNodeCandidates, pickNode } from '../lib/node-select.js'
 import { agentPresetFromEnv, overlayEnv, proxyOverlayArgs, resolvePnpm, searchEngineSpec, selfImproveEnabled, webToolsSpec } from '../lib/profiles.js'
@@ -183,7 +184,7 @@ async function main(argv) {
   }
   const proxy = spawn(proxyBin, ['--port', String(port), '--address', proxyAddress], {
     stdio: proxyStdio(process.env), // access logs only with SNOOPY_PROXY_LOG=1
-    env: { ...proxyEnv, RILL_PROXY_KEY: proxyKey, RILL_WEB_TOOLS: webToolsSpec(proxyEnv), RILL_SEARCH_ENGINE: searchEngineSpec(proxyEnv) },
+    env: { ...proxyEnv, RILL_PROXY_KEY: proxyKey, RILL_WEB_TOOLS: webToolsSpec(proxyEnv), RILL_SEARCH_ENGINE: searchEngineSpec(proxyEnv), ...mcpConfigEnv(proxyEnv) },
   })
   process.on('exit', () => proxy.kill('SIGTERM'))
   try {

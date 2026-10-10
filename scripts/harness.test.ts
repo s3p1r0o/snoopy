@@ -12,6 +12,7 @@ import { firstFreePort } from '../bin/launcher.js'
 import { portIsFree, proxyStdio, waitProxyReady } from '../lib/proxy-ready.js'
 import { embeddedSearxngDir, searxngSettings, startSearxng } from '../lib/searxng.js'
 import { EMPTY_PROFILE_PATCH, LEGACY_PROFILE_PATCHES, MIGRATIONS, migrateDshHome } from '../lib/migrations.js'
+import { mcpConfigEnv, mcpConfigMode } from '../lib/mcp-config.js'
 import { agentPresetFromEnv, overlayEnv, PROXY_PROFILES, proxyOverlayArgs, resolvePnpm, searchEngineSpec, selfImproveEnabled, webToolsSpec } from '../lib/profiles.js'
 import { type NodeCandidate, parseNodeVersion, pickNode } from '../lib/node-select.js'
 
@@ -397,4 +398,35 @@ require('node:http').createServer((req, res) => {
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
+})
+
+test('mcpConfigMode: the default Wikipedia knowledge base on unless opted out; explicit RILL_MCP_CONFIG wins', () => {
+  assert.equal(mcpConfigMode({}), 'default')
+  for (const value of ['0', 'false', 'OFF', 'no']) assert.equal(mcpConfigMode({ SNOOPY_MCP: value }), 'off', value)
+  assert.equal(mcpConfigMode({ SNOOPY_MCP: '1' }), 'default')
+  assert.equal(mcpConfigMode({ RILL_MCP_CONFIG: '/x/mcp.json' }), 'explicit')
+  assert.equal(mcpConfigMode({ RILL_MCP_CONFIG: ' /x ', SNOOPY_MCP: '0' }), 'explicit')
+  assert.equal(mcpConfigMode({ RILL_MCP_CONFIG: ' ' }), 'default')
+})
+
+test('mcpConfigEnv points the proxy at the default config; explicit stays the proxy\'s own affair; off adds nothing', () => {
+  // Default: the default config file is written under the given XDG_CONFIG_HOME
+  // and the proxy gets RILL_MCP_CONFIG pointing at it.
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'snoopy-mcp-'))
+  try {
+    const env = mcpConfigEnv({ XDG_CONFIG_HOME: dir })
+    const configPath = path.join(dir, 'snoopy', 'mcp.json')
+    assert.deepEqual(env, { RILL_MCP_CONFIG: configPath })
+    const written = JSON.parse(readFileSync(configPath, 'utf8'))
+    assert.equal(written.mcpServers.wiki.type, 'http')
+    assert.equal(written.mcpServers.wiki.url, 'https://wikipedia.caseyjhand.com/mcp')
+    // Idempotent, and a user's own edits are never clobbered.
+    writeFileSync(configPath, '{"mcpServers":{}}')
+    assert.deepEqual(mcpConfigEnv({ XDG_CONFIG_HOME: dir }), { RILL_MCP_CONFIG: configPath })
+    assert.deepEqual(JSON.parse(readFileSync(configPath, 'utf8')), { mcpServers: {} })
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+  assert.deepEqual(mcpConfigEnv({ RILL_MCP_CONFIG: '/mine.json' }), {})
+  assert.deepEqual(mcpConfigEnv({ SNOOPY_MCP: 'no' }), {})
 })
