@@ -491,3 +491,45 @@ func (b *lockedBuffer) String() string {
 	defer b.mu.Unlock()
 	return b.buf.String()
 }
+
+// TestMCPStatusesTrackConnectionState pins the per-server state the
+// /debug/tools endpoint reports: one entry per enabled server, sorted by
+// name (a JSON object has no preserved order: stdlib map iteration is
+// random, so parseMCPConfig sorts), with the kind and the tools only a
+// connected server has.
+func TestMCPStatusesTrackConnectionState(t *testing.T) {
+	path := writeMCPConfig(t, fmt.Sprintf(`{"mcpServers":{
+		"sh":{"command":%q,"env":{"SNOOPY_MCP_STDIO_HELPER":"echo"}},
+		"dead":{"command":"sh","args":["-c","exit 3"]},
+		"remote":{"type":"http","url":"http://127.0.0.1:1/mcp"}
+	}}`, os.Args[0]))
+	var log lockedBuffer
+	m, err := startMCPServers(path, &log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.close()
+	got := m.serverStatuses()
+	if len(got) != 3 {
+		t.Fatalf("statuses = %d entries, want 3 (declaration order)", len(got))
+	}
+	want := []mcpServerStatus{
+		{Name: "dead", Kind: "stdio"},
+		{Name: "remote", Kind: "http"},
+		{Name: "sh", Kind: "stdio", Connected: true},
+	}
+	for i, w := range want {
+		if got[i].Name != w.Name || got[i].Kind != w.Kind || got[i].Connected != w.Connected {
+			t.Fatalf("status[%d] = %s kind=%s connected=%v, want %s kind=%s connected=%v\nlog = %q",
+				i, got[i].Name, got[i].Kind, got[i].Connected, w.Name, w.Kind, w.Connected, log.String())
+		}
+	}
+	if s := got[2]; len(s.Tools) != 2 || s.Tools[0] != "sh__boom" || s.Tools[1] != "sh__echo" {
+		t.Fatalf("connected tools = %v, want [sh__boom sh__echo]\nlog = %q", s.Tools, log.String())
+	}
+	for _, s := range got[:2] {
+		if len(s.Tools) != 0 {
+			t.Fatalf("unconnected server %s has tools %v", s.Name, s.Tools)
+		}
+	}
+}

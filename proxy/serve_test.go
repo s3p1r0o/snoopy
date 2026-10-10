@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 )
@@ -549,5 +550,99 @@ func TestVersionFlag(t *testing.T) {
 	}
 	if errOut.Len() != 0 {
 		t.Fatalf("stderr = %q, want empty", errOut.String())
+	}
+}
+
+// TestDebugToolsReportsOfferedToolsAndMCPState pins the /debug/tools
+// endpoint: bearer-key protected like /v1/models, the full offered-tool
+// list with a source per tool, and one entry per declared MCP server with
+// its connection state (targets — URLs, command lines, headers — stay out:
+// the config file holds them, headers may hold secrets).
+func TestDebugToolsReportsOfferedToolsAndMCPState(t *testing.T) {
+	path := writeMCPConfig(t, fmt.Sprintf(`{"mcpServers":{"sh":{"command":%q,"env":{"SNOOPY_MCP_STDIO_HELPER":"echo"}}}}`, os.Args[0]))
+	var log bytes.Buffer
+	m, err := startMCPServers(path, &log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.close()
+	web, err := newWebTools("fetch", "", "", "", &log, m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := newTestHandler(&fakeCompleter{}, serveConfig{key: "secret", web: web, mcp: m})
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest("GET", "/debug/tools", nil))
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("missing key: status = %d, want 401", rec.Code)
+	}
+
+	req := httptest.NewRequest("GET", "/debug/tools", nil)
+	req.Header.Set("Authorization", "Bearer secret")
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("with key: status = %d, want 200; body = %s", rec.Code, rec.Body.Bytes())
+	}
+	var body struct {
+		Tools []struct {
+			Name        string          `json:"name"`
+			Description string          `json:"description"`
+			Source      string          `json:"source"`
+			InputSchema json.RawMessage `json:"input_schema"`
+		} `json:"tools"`
+		MCPServers []mcpServerStatus `json:"mcpServers"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("body is not JSON: %s", rec.Body.Bytes())
+	}
+	var webFetch, shEcho *struct {
+		Name, Description, Source string
+	}
+	for i := range body.Tools {
+		switch body.Tools[i].Name {
+		case "web_fetch":
+			tool := struct{ Name, Description, Source string }{body.Tools[i].Name, body.Tools[i].Description, body.Tools[i].Source}
+			webFetch = &tool
+		case "sh__echo":
+			tool := struct{ Name, Description, Source string }{body.Tools[i].Name, body.Tools[i].Description, body.Tools[i].Source}
+			shEcho = &tool
+		}
+	}
+	if webFetch == nil {
+		t.Fatalf("tools = %s: web_fetch missing", rec.Body.Bytes())
+	}
+	if webFetch.Source != "web" {
+		t.Fatalf("web_fetch source = %q, want web", webFetch.Source)
+	}
+	if shEcho == nil {
+		t.Fatalf("tools = %s: sh__echo missing", rec.Body.Bytes())
+	}
+	if shEcho.Source != "mcp" {
+		t.Fatalf("sh__echo source = %q, want mcp", shEcho.Source)
+	}
+	if len(body.MCPServers) != 1 || body.MCPServers[0].Name != "sh" || body.MCPServers[0].Kind != "stdio" || !body.MCPServers[0].Connected {
+		t.Fatalf("mcpServers = %+v", body.MCPServers)
+	}
+	if len(body.MCPServers[0].Tools) != 2 || body.MCPServers[0].Tools[0] != "sh__boom" || body.MCPServers[0].Tools[1] != "sh__echo" {
+		t.Fatalf("mcpServers[0].tools = %v", body.MCPServers[0].Tools)
+	}
+
+	// No web tools and no MCP: empty lists, still 200.
+	h = newTestHandler(&fakeCompleter{}, serveConfig{key: "secret"})
+	req = httptest.NewRequest("GET", "/debug/tools", nil)
+	req.Header.Set("Authorization", "Bearer secret")
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("bare proxy: status = %d, want 200; body = %s", rec.Code, rec.Body.Bytes())
+	}
+	var bare map[string]json.RawMessage
+	if err := json.Unmarshal(rec.Body.Bytes(), &bare); err != nil {
+		t.Fatalf("bare body is not JSON: %s", rec.Body.Bytes())
+	}
+	if bare["tools"] == nil || string(bare["tools"]) != "[]" {
+		t.Fatalf("bare tools = %s, want []", bare["tools"])
 	}
 }

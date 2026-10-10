@@ -113,6 +113,10 @@ func parseMCPConfig(path string) ([]enabledServer, error) {
 			out = append(out, enabledServer{spec: s})
 		}
 	}
+	// A JSON object has no preserved order (stdlib map iteration is random):
+	// sort by name so the connect order, the log lines and /debug/tools'
+	// serverStatuses come out the same on every boot of the same config.
+	sort.Slice(out, func(i, j int) bool { return out[i].spec.name < out[j].spec.name })
 	return out, nil
 }
 
@@ -134,6 +138,19 @@ type mcpManager struct {
 	tools    map[string]*mcpTool
 	sessions []*mcp.ClientSession
 	log      io.Writer
+	// statuses has one entry per enabled server, in declaration order,
+	// including the ones that failed to connect (Connected false).
+	statuses []mcpServerStatus
+}
+
+// mcpServerStatus is the state of one declared MCP server, as the
+// /debug/tools endpoint reports it. Targets (command lines, URLs, headers)
+// are left out: the config file already holds them, headers may hold secrets.
+type mcpServerStatus struct {
+	Name      string   `json:"name"`
+	Kind      string   `json:"kind"` // stdio or http
+	Connected bool     `json:"connected"`
+	Tools     []string `json:"tools,omitempty"` // server__tool names, sorted
 }
 
 // mutexWriter makes one log stream safe for the writers that touch it
@@ -160,10 +177,16 @@ func startMCPServers(configPath string, log io.Writer) (*mcpManager, error) {
 	}
 	m := &mcpManager{log: &mutexWriter{next: log}}
 	for _, es := range servers {
+		kind := "stdio"
+		if es.spec.url != "" {
+			kind = "http"
+		}
+		m.statuses = append(m.statuses, mcpServerStatus{Name: es.spec.name, Kind: kind})
 		session := connectMCPSession(es.spec, m.log)
 		if session == nil {
 			continue
 		}
+		m.statuses[len(m.statuses)-1].Connected = true
 		m.sessions = append(m.sessions, session)
 		m.listTools(es.spec, session)
 	}
@@ -322,6 +345,25 @@ func (m *mcpManager) defs() []Tool {
 	out := make([]Tool, 0, len(names))
 	for _, name := range names {
 		out = append(out, m.tools[name].def)
+	}
+	return out
+}
+
+// statuses reports one entry per enabled server, in declaration order, each
+// with its tools from the connected set. nil (as nil, not an empty slice)
+// when MCP is off, so the JSON omits the field.
+func (m *mcpManager) serverStatuses() []mcpServerStatus {
+	if m == nil {
+		return nil
+	}
+	out := append([]mcpServerStatus(nil), m.statuses...)
+	for i := range out {
+		for _, tool := range m.tools {
+			if tool.server == out[i].Name {
+				out[i].Tools = append(out[i].Tools, tool.def.Name)
+			}
+		}
+		sort.Strings(out[i].Tools)
 	}
 	return out
 }

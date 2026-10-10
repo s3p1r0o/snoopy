@@ -31,7 +31,8 @@ type serveConfig struct {
 	systemPrompt        string
 	maxInputTokens      int
 	maxRequestBodyBytes int64
-	web                 *webTools // nil: no server-side web tools
+	web                 *webTools   // nil: no server-side web tools
+	mcp                 *mcpManager // nil: MCP is off (reported so by /debug/tools)
 }
 
 // maxRequestBodyBytes is the default local cap on request bodies. It matches the
@@ -110,6 +111,7 @@ func runServe(args []string, stdout, stderr io.Writer) {
 		fatalf(stderr, "%v", err)
 	}
 	cfg.web = web
+	cfg.mcp = mcpMgr
 	if names := toolNames(mcpMgr.defs()); len(names) > 0 {
 		fmt.Fprintf(stdout, "MCP tools run by the proxy: %s.\n", strings.Join(names, ", "))
 	}
@@ -217,6 +219,36 @@ func newServeHandler(cfg serveConfig, comp completer) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintln(w, "ok")
+	})
+	// /debug/tools reports what the model is offered at runtime: the web
+	// tools, the MCP tools (source "mcp") and each declared MCP server's
+	// connection state. Bearer-key protected like /v1/models.
+	mux.HandleFunc("GET /debug/tools", func(w http.ResponseWriter, r *http.Request) {
+		if authFailed(w, r, cfg.key) {
+			return
+		}
+		tools := []map[string]any{}
+		if cfg.web != nil {
+			mcpNames := map[string]bool{}
+			if cfg.mcp != nil {
+				for name := range cfg.mcp.tools {
+					mcpNames[name] = true
+				}
+			}
+			for _, tool := range cfg.web.offered() {
+				source := "web"
+				if mcpNames[tool.Name] {
+					source = "mcp"
+				}
+				tools = append(tools, map[string]any{
+					"name":         tool.Name,
+					"description":  tool.Description,
+					"source":       source,
+					"input_schema": json.RawMessage(tool.InputSchema),
+				})
+			}
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"tools": tools, "mcpServers": cfg.mcp.serverStatuses()})
 	})
 	mux.HandleFunc("GET /v1/models", func(w http.ResponseWriter, r *http.Request) {
 		if authFailed(w, r, cfg.key) {
