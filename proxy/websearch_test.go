@@ -81,7 +81,7 @@ func TestBraveSearch(t *testing.T) {
 		w.Write([]byte(`{"web":{"results":[{"title":"A","url":"https://a.example","description":"aa","age":"2 hours ago"}]}}`))
 	}))
 	defer srv.Close()
-	e := &braveEngine{key: "secret", endpoint: srv.URL, client: http.DefaultClient}
+	e := &braveEngine{key: "secret", endpoint: srv.URL, client: newSearchClient()}
 	rs, err := e.search(context.Background(), "q", 3)
 	if err != nil || len(rs) != 1 || rs[0].Snippet != "aa" || rs[0].Published != "2 hours ago" {
 		t.Fatalf("rs=%+v err=%v", rs, err)
@@ -117,7 +117,7 @@ func ddgServer(t *testing.T, handler http.HandlerFunc) *duckduckgoEngine {
 	t.Helper()
 	srv := httptest.NewServer(handler)
 	t.Cleanup(srv.Close)
-	return &duckduckgoEngine{endpoint: srv.URL, client: http.DefaultClient}
+	return &duckduckgoEngine{endpoint: srv.URL, client: newSearchClient()}
 }
 
 func TestDuckDuckGoSearch(t *testing.T) {

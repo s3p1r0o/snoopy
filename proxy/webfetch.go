@@ -10,7 +10,10 @@ package main
 //   - follows at most maxRedirects redirects, each one re-checked on connect;
 //   - caps the decoded body at maxFetchBodyBytes and flags the cut;
 //   - presents itself as desktop Chrome (User-Agent and client hints), since
-//     many sites refuse clients that do not look like a browser.
+//     many sites refuse clients that do not look like a browser;
+//   - performs Chrome's TLS handshake, not Go's, via imroc/req and utls, so
+//     bot walls that fingerprint the ClientHello (Cloudflare and the like)
+//     cannot refuse the fetch on that ground alone.
 
 import (
 	"context"
@@ -25,6 +28,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/imroc/req/v3"
 )
 
 const (
@@ -35,8 +40,8 @@ const (
 
 // chromeUserAgent and browserHeaders make requests look like desktop Chrome on
 // Windows, the most common browser: bump the version with Chrome's stable
-// channel (155: October 2026). Go's TLS fingerprint still differs from
-// Chrome's, so bot walls that check it (Cloudflare and the like) still refuse.
+// channel (155: October 2026). The TLS fingerprint is Chrome's too: see
+// SetTLSFingerprintChrome in newFetcher.
 const chromeUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36"
 
 var browserHeaders = map[string]string{
@@ -100,7 +105,7 @@ func publicAddr(a netip.Addr) bool {
 
 // fetcher performs the web tools' page requests.
 type fetcher struct {
-	client *http.Client
+	client *req.Client
 }
 
 // newFetcher builds a fetcher; allowPrivate disables the public-address check
@@ -119,27 +124,26 @@ func newFetcher(allowPrivate bool) *fetcher {
 			return nil
 		},
 	}
-	return &fetcher{
-		client: &http.Client{
-			Timeout: fetchTimeout,
-			Transport: &http.Transport{
-				Proxy:               nil,
-				DialContext:         dialer.DialContext,
-				TLSHandshakeTimeout: 10 * time.Second,
-				MaxIdleConns:        10,
-				IdleConnTimeout:     30 * time.Second,
-			},
-			CheckRedirect: func(req *http.Request, via []*http.Request) error {
-				if len(via) >= maxRedirects {
-					return fmt.Errorf("stopped after %d redirects", maxRedirects)
-				}
-				if req.URL.Scheme != "http" && req.URL.Scheme != "https" {
-					return fmt.Errorf("redirect to unsupported scheme %q", req.URL.Scheme)
+	client := req.C().
+		SetTimeout(fetchTimeout).
+		DisableAutoReadResponse(). // the caps stay ours: see fetcher.get
+		SetProxy(nil).             // ignores HTTP(S)_PROXY, which would hide the real target from the address check
+		SetDial(dialer.DialContext).
+		SetTLSHandshakeTimeout(10*time.Second).
+		SetTLSFingerprintChrome().
+		SetRedirectPolicy(
+			req.MaxRedirectPolicy(maxRedirects),
+			// a redirect away from http(s) is never followed
+			func(r *http.Request, via []*http.Request) error {
+				if r.URL.Scheme != "http" && r.URL.Scheme != "https" {
+					return fmt.Errorf("redirect to unsupported scheme %q", r.URL.Scheme)
 				}
 				return nil
 			},
-		},
-	}
+		).
+		SetCommonHeaders(browserHeaders)
+	client.Transport.SetMaxIdleConns(10).SetIdleConnTimeout(30 * time.Second)
+	return &fetcher{client: client}
 }
 
 // page is one fetched response.
@@ -158,14 +162,7 @@ func (f *fetcher) get(ctx context.Context, rawURL string) (*page, error) {
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 		return nil, fmt.Errorf("invalid URL %q: only absolute http(s) URLs can be fetched", rawURL)
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-	for name, value := range browserHeaders {
-		req.Header.Set(name, value)
-	}
-	resp, err := f.client.Do(req)
+	resp, err := f.client.R().SetContext(ctx).Get(u.String())
 	if err != nil {
 		return nil, err
 	}
@@ -174,7 +171,12 @@ func (f *fetcher) get(ctx context.Context, rawURL string) (*page, error) {
 	if err != nil {
 		return nil, err
 	}
-	p := &page{URL: resp.Request.URL, Status: resp.StatusCode, rawType: resp.Header.Get("Content-Type")}
+	p := &page{
+		// Response embeds *http.Response: its Request is the last one, after redirects.
+		URL:     resp.Response.Request.URL,
+		Status:  resp.StatusCode,
+		rawType: resp.Header.Get("Content-Type"),
+	}
 	if len(body) > maxFetchBodyBytes {
 		body, p.Truncated = body[:maxFetchBodyBytes], true
 	}

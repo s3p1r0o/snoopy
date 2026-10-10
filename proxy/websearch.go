@@ -3,8 +3,10 @@ package main
 // websearch.go backs the web_search tool with a search engine the operator
 // configures: a SearXNG instance (self-hosted, its JSON API enabled), the
 // Brave Search API, or DuckDuckGo's keyless HTML page (only when asked for).
-// Engine endpoints are operator-chosen, so they are called with a plain
-// client (a local SearXNG is the usual setup), not the fetcher.
+// Engine endpoints are operator-chosen, so they are called with their own
+// client (a local SearXNG is the usual setup), not the fetcher; like the
+// fetcher, that client presents Chrome's TLS fingerprint, which DuckDuckGo's
+// bot defences inspect.
 
 import (
 	"context"
@@ -20,6 +22,7 @@ import (
 	"time"
 
 	"github.com/PuerkitoBio/goquery"
+	"github.com/imroc/req/v3"
 )
 
 const (
@@ -37,6 +40,17 @@ type searchResult struct {
 	Title, URL, Snippet, Published string
 }
 
+// newSearchClient builds the client all search engines use: like the fetcher,
+// it speaks Chrome's TLS handshake, since bot walls also fingerprint requests
+// to search engines (DuckDuckGo's, at least, do). Auto-reading the body is off
+// so callers keep their size caps.
+func newSearchClient() *req.Client {
+	return req.C().
+		SetTimeout(searchTimeout).
+		SetTLSFingerprintChrome().
+		DisableAutoReadResponse()
+}
+
 // searchEngine runs one web search.
 type searchEngine interface {
 	name() string
@@ -47,7 +61,7 @@ type searchEngine interface {
 // or "" to use whichever is configured (SearXNG first, then Brave). It returns
 // nil, nil when none is: DuckDuckGo, which scrapes a page, is never implied.
 func newSearchEngine(kind, searxngURL, braveKey string) (searchEngine, error) {
-	client := &http.Client{Timeout: searchTimeout}
+	client := newSearchClient()
 	if kind == "" {
 		switch {
 		case searxngURL != "":
@@ -78,7 +92,7 @@ func newSearchEngine(kind, searxngURL, braveKey string) (searchEngine, error) {
 
 type searxngEngine struct {
 	base   *url.URL
-	client *http.Client
+	client *req.Client
 }
 
 func (e *searxngEngine) name() string { return "searxng" }
@@ -113,7 +127,7 @@ func (e *searxngEngine) search(ctx context.Context, query string, limit int) ([]
 
 type braveEngine struct {
 	key, endpoint string
-	client        *http.Client
+	client        *req.Client
 }
 
 func (e *braveEngine) name() string { return "brave" }
@@ -153,7 +167,7 @@ var errDDGRateLimited = errors.New("DuckDuckGo is rate-limiting this machine (HT
 // become errDDGRateLimited. Ads are skipped.
 type duckduckgoEngine struct {
 	endpoint    string
-	client      *http.Client
+	client      *req.Client
 	minInterval time.Duration
 
 	mu   sync.Mutex
@@ -184,15 +198,16 @@ func (e *duckduckgoEngine) search(ctx context.Context, query string, limit int) 
 		return nil, err
 	}
 	form := url.Values{"q": {query}, "b": {""}, "kl": {"wt-wt"}}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, e.endpoint, strings.NewReader(form.Encode()))
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("Referer", "https://html.duckduckgo.com/")
-	req.Header.Set("User-Agent", chromeUserAgent)
-	req.Header.Set("Accept-Language", browserHeaders["Accept-Language"])
-	resp, err := e.client.Do(req)
+	resp, err := e.client.R().
+		SetContext(ctx).
+		SetHeaders(map[string]string{
+			"Content-Type":    "application/x-www-form-urlencoded",
+			"Referer":         "https://html.duckduckgo.com/",
+			"User-Agent":      chromeUserAgent,
+			"Accept-Language": browserHeaders["Accept-Language"],
+		}).
+		SetBodyString(form.Encode()).
+		Post(e.endpoint)
 	if err != nil {
 		return nil, err
 	}
@@ -245,16 +260,12 @@ func resultURL(href string) string {
 }
 
 // getJSON GETs rawURL and decodes its JSON body into v.
-func getJSON(ctx context.Context, client *http.Client, rawURL string, header http.Header, v any) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
-	if err != nil {
-		return err
-	}
+func getJSON(ctx context.Context, client *req.Client, rawURL string, header http.Header, v any) error {
+	r := client.R().SetContext(ctx).SetHeader("Accept", "application/json")
 	for k, vs := range header {
-		req.Header[k] = vs
+		r.Headers[http.CanonicalHeaderKey(k)] = vs
 	}
-	req.Header.Set("Accept", "application/json")
-	resp, err := client.Do(req)
+	resp, err := r.Get(rawURL)
 	if err != nil {
 		return err
 	}
