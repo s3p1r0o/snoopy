@@ -5,10 +5,16 @@ Format based on [Keep a Changelog](https://keepachangelog.com/); the project doe
 
 ## [Unreleased]
 
+- **Docs.** Drop the `tui` mode: this dsh release ships no terminal UI (`snoopy tui` failed with `profile "tui" does not exist`). `web` and `headless` are the profiles routed through the proxy.
+
+## [0.1.1] - 2026-10-10
+
 - **npm page.** README opens with install, usage and environment for package users (development notes follow); `package.json` gains repository, homepage, bugs, keywords and author; MIT `LICENSE` file added (shipped in the package).
 - **Docs.** `npm publish ./dist/*.tgz`: without the `./`, npm reads `dist/<file>` as a GitHub repository.
 
 ## [0.1.0] - 2026-10-10
+
+Withdrawn from npm (superseded by 0.1.1); the version number cannot be reused there.
 
 - **Releases.** Tags are `v<version>`; pushing one runs the `release` workflow, which publishes the four proxy tarballs (linux/darwin × amd64/arm64) and `SHA256SUMS` as the GitHub Release the npm launcher downloads from. Asset names and the stamped version drop the `v`.
 - **npm package.** Publishable (no longer `private`, public scoped access). `just npm-release` takes the package version from the release tag, refuses a dirty or untagged HEAD, and leaves `package.json` unchanged.

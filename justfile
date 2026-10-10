@@ -56,7 +56,7 @@ docker-run *flags:
 
 # Boot the dev harness: proxy + DeepSeek Harness (dsh), DSH_HOME=.dsh.
 # Usage: just harness            (default mode: web UI)
-#        just harness tui | headless "task" | --help
+#        just harness headless "task" | --help
 harness mode="web" *args:
     npm run harness -- {{mode}} {{args}}
 

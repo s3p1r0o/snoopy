@@ -22,11 +22,10 @@ The install downloads the proxy binary for your platform from this repository's 
 
 ```sh
 snoopy web                                         # dsh Web UI
-snoopy tui                                         # terminal UI
-snoopy headless "Reply with the single word: pong" # one-shot task
+snoopy headless "Reply with the single word: pong" # one-shot task: prints the answer and exits
 ```
 
-Arguments after `snoopy` go to dsh unchanged (`snoopy --help` lists them). New sessions default to `rill-assistant` through the proxy; no model picker step. Profiles and sessions live under `$XDG_DATA_HOME/snoopy/dsh` (by default `~/.local/share/snoopy/dsh`).
+The first argument names a dsh profile; `web` and `headless` are the two snoopy routes through the proxy. dsh's other shipped profiles (`acp`, `sdk`) boot without that routing, and this dsh release has no terminal UI. Further arguments go to dsh unchanged (`snoopy web --help` lists the web app's flags). New sessions default to `rill-assistant` through the proxy; no model picker step. Profiles and sessions live under `$XDG_DATA_HOME/snoopy/dsh` (by default `~/.local/share/snoopy/dsh`).
 
 ### Environment
 
@@ -199,7 +198,6 @@ One Dockerfile, two targets:
 docker build -t snoopy --build-arg VERSION=$(git describe --always) .
 docker run --rm -d # --network host snoopy          # UI: http://127.0.0.1:3080/?token=… (from docker logs)
 docker run --rm -p 8081:8081 snoopy headless "Reply with the single word: pong"
-docker run --rm -p 8081:8081 snoopy tui           # terminal UI over an attached tty
 
 # Proxy alone (as before):
 docker build --target proxy -t snoopy:proxy . 
