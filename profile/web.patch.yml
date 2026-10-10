@@ -1,13 +1,14 @@
-# Bundled web profile for @s3p1r0o/snoopy: the embedded proxy is
-# the only provider route and the sessions' default model. {{PROXY_PORT}} is
-# substituted by the launcher at first boot.
+# Snoopy routing for the dsh web profile, layered by the launcher with
+# `--patch` on every boot (never copied into the dsh home, so a package
+# upgrade brings it along): the embedded proxy is the only provider route and
+# the sessions' default model. The port arrives through SNOOPY_PORT.
 - id: llm-pi-ai
   config:
     providers:
       proxy:
         apiKeyEnv: SNOOPY_PROXY_KEY
         api: openai-completions
-        baseURL: http://127.0.0.1:{{PROXY_PORT}}/v1
+        baseURL: !!js "`http://127.0.0.1:${process.env.SNOOPY_PORT ?? '8081'}/v1`"
         models:
           - id: rill-assistant
             name: rill-assistant (Rill via the embedded proxy)

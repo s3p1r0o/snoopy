@@ -4,9 +4,11 @@
 // One process, one Ctrl-C: make sure the embedded proxy Go binary is
 // present (postinstall normally downloaded it; else download now from the
 // matching GitHub Release), start it loopback-only with an ephemeral bearer
-// key, then boot DeepSeek Harness (dsh) through it with the bundled profile as
-// the dsh home — the proxy serves the only provider ("proxy") and new
-// sessions default to model "rill-assistant".
+// key, then boot DeepSeek Harness (dsh) through it. The packaged routing
+// (profile/<name>.patch.yml) is layered with --patch on every boot — the proxy
+// serves the only provider ("proxy") and new sessions default to model
+// "rill-assistant" — and lib/migrations.js upgrades what older versions left
+// in the dsh home.
 //
 // Env overrides (all optional):
 //   DSH_NODE            path to a Node binary (official nodejs.org builds preferred)
@@ -28,7 +30,9 @@ import process from 'node:process'
 import { randomBytes, createHash } from 'node:crypto'
 import { createRequire } from 'node:module'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+import { migrateDshHome } from '../lib/migrations.js'
 import { collectNodeCandidates, pickNode } from '../lib/node-select.js'
+import { proxyOverlayArgs } from '../lib/profiles.js'
 
 const PKG_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const require = createRequire(import.meta.url)
@@ -48,8 +52,10 @@ const platformTag =
 function warn(msg) {
   console.warn(`[snoopy] ${msg}`)
 }
+// Stdout belongs to dsh (the headless answer, the acp/sdk JSON-RPC stream):
+// the launcher's own messages and the proxy's logs go to stderr.
 function log(msg) {
-  console.log(`[snoopy] ${msg}`)
+  console.error(`[snoopy] ${msg}`)
 }
 
 // --- proxy binary provisioning ---
@@ -103,36 +109,10 @@ async function resolveProxyBinary() {
   }
 }
 
-// --- dsh home (bundled profile) ---
+// --- dsh home ---
 
 function xdgDataHome() {
   return process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local', 'share')
-}
-
-/**
- * Write the bundled web+headless profiles under dshHome unless already present;
- * an existing profile only gets its proxy baseURL retargeted at this launch's
- * port (the free port can change between boots), other edits are kept.
- */
-function ensureDshProfile(dshHome, port) {
-  for (const profileName of ['web', 'headless']) {
-    const profiles = path.join(dshHome, 'profiles')
-    mkdirSync(profiles, { recursive: true })
-    const patch = path.join(profiles, profileName, 'cordis.patch.yml')
-    if (!existsSync(patch)) {
-      const template = readFileSync(path.join(PKG_ROOT, 'profile', `${profileName}.patch.yml`), 'utf8')
-      mkdirSync(path.dirname(patch), { recursive: true })
-      writeFileSync(patch, template.replaceAll('{{PROXY_PORT}}', String(port)))
-      log(`profile written to ${patch}`)
-      continue
-    }
-    const current = readFileSync(patch, 'utf8')
-    const updated = current.replace(/(baseURL:\s*http:\/\/127\.0\.0\.1:)\d+(\/v1)/g, `$1${port}$2`)
-    if (updated !== current) {
-      writeFileSync(patch, updated)
-      log(`profile ${profileName}: proxy port set to ${port}`)
-    }
-  }
 }
 
 // --- network helpers ---
@@ -192,7 +172,7 @@ async function main(argv) {
     process.env.SNOOPY_PROXY_KEY ||
     randomBytes(16).toString('hex')
   const proxy = spawn(proxyBin, ['--port', String(port), '--address', proxyAddress], {
-    stdio: ['ignore', 'inherit', 'inherit'],
+    stdio: ['ignore', 2, 2], // proxy access logs to stderr: stdout is dsh's
     env: { ...process.env, RILL_PROXY_KEY: proxyKey },
   })
   process.on('exit', () => proxy.kill('SIGTERM'))
@@ -203,13 +183,15 @@ async function main(argv) {
   log(`proxy ready: http://${proxyAddress}:${port}/v1 (bearer-key protected)`)
 
   const dshHome = process.env.DSH_HOME || path.join(xdgDataHome(), 'snoopy', 'dsh')
-  ensureDshProfile(dshHome, port)
+  migrateDshHome(dshHome, log)
 
-  const child = spawn(chosen.path, [require.resolve('@deepseek-ai/dsh/lib/bin.js'), ...argv], {
+  const dshArgs = proxyOverlayArgs(argv, path.join(PKG_ROOT, 'profile'))
+  const child = spawn(chosen.path, [require.resolve('@deepseek-ai/dsh/lib/bin.js'), ...dshArgs], {
     stdio: 'inherit',
     env: {
       ...process.env,
       DSH_HOME: dshHome,
+      SNOOPY_PORT: String(port), // read by the routing patch (profile/*.patch.yml)
       SNOOPY_PROXY_KEY: proxyKey,
     },
   })
@@ -256,4 +238,4 @@ if (isMain) {
   })
 }
 
-export { firstFreePort, ensureDshProfile, resolveProxyBinary, downloadProxyBinary, PROXY_BIN, platformTag, RELEASE_VERSION, RELEASE_URL_PREFIX }
+export { firstFreePort, resolveProxyBinary, downloadProxyBinary, PROXY_BIN, platformTag, RELEASE_VERSION, RELEASE_URL_PREFIX }

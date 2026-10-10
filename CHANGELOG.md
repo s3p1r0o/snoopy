@@ -5,6 +5,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/); the project doe
 
 ## [Unreleased]
 
+- **ACP.** `snoopy acp` serves the Agent Client Protocol on stdio for orchestrators, routed through the proxy (overrides the acp bundle's own `deepseek-official` model). Also in dev mode (`just harness acp`).
+- **Routing from the package.** Both launchers layer `profile/<name>.patch.yml` with `--patch` on every boot (port through `SNOOPY_PORT`) instead of copying it into the dsh home, so an upgrade brings the new routing and `cordis.patch.yml` stays the user's (and the agent's) layer.
+- **Migrations.** `lib/migrations.js`: ordered, append-only migrations applied once per dsh home and recorded in `snoopy-migrations.json`. The first one removes the 0.1.x routing copies, keeping user entries (with a backup) and leaving edited copies alone.
+- **Stdout belongs to dsh.** Both launchers send their own messages and the proxy's access logs to stderr, so the ACP stream and `snoopy headless` output stay clean.
 - **Docs.** Drop the `tui` mode: this dsh release ships no terminal UI (`snoopy tui` failed with `profile "tui" does not exist`). `web` and `headless` are the profiles routed through the proxy.
 
 ## [0.1.1] - 2026-10-10

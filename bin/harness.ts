@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 // Repo-dev launcher (snoopy): builds (when needed) and starts the proxy Go binary
 // (build/proxy), then boots DeepSeek Harness (dsh) with DSH_HOME rooted at
-// <repo>/.dsh so the provider and default model resolve from
-// .dsh/profiles/web/cordis.patch.yml (see README). The npm-published standalone
-// launcher lives in packages/harness/bin/launcher.js — same bootstrap, but it
-// manages its own dsh home and downloads the proxy binary if missing.
+// <repo>/.dsh and the routing patch profile/<name>.patch.yml layered with
+// --patch, so the provider and default model resolve to the proxy (see README).
+// The npm-published standalone launcher lives in bin/launcher.js — same
+// bootstrap, but it manages its own dsh home and downloads the proxy binary if
+// missing.
 //
 // Usage: npm run harness [-- dsh args...]     (e.g. `npm run harness -- headless "task"`)
 
@@ -15,6 +16,7 @@ import { createRequire } from 'node:module'
 import path from 'node:path'
 import process from 'node:process'
 import { collectNodeCandidates, pickNode } from '../lib/node-select.js'
+import { proxyOverlayArgs } from '../lib/profiles.js'
 
 const ROOT = path.resolve(new URL('./..', import.meta.url).pathname)
 
@@ -62,7 +64,9 @@ async function main(argv: string[]): Promise<void> {
       '[snoopy] or force a specific binary: DSH_NODE=/path/to/node npm run harness',
     )
   }
-  console.log(`[snoopy] booting dsh under Node ${chosen.version} (${chosen.official ? 'official' : 'unofficial'})`)
+  // Stdout belongs to dsh (headless answer, acp JSON-RPC): own messages and
+  // proxy logs go to stderr.
+  console.error(`[snoopy] booting dsh under Node ${chosen.version} (${chosen.official ? 'official' : 'unofficial'})`)
 
   const port = Number(process.env.SNOOPY_PORT ?? 8081)
   const proxyBin = process.env.DSH_PROXY_BIN ? path.resolve(process.env.DSH_PROXY_BIN) : ensureProxyBinary()
@@ -75,16 +79,19 @@ async function main(argv: string[]): Promise<void> {
     process.env.SNOOPY_PROXY_KEY ||
     randomBytes(16).toString('hex')
   const proxy = spawn(proxyBin, ['--port', String(port), '--address', '127.0.0.1'], {
-    stdio: ['ignore', 'inherit', 'inherit'],
+    stdio: ['ignore', 2, 2],
     env: { ...process.env, RILL_PROXY_KEY: proxyKey },
   })
   if (!(await waitHealthy(port))) {
     proxy.kill('SIGTERM')
     throw new Error(`proxy on :${port} did not become healthy within 10s`)
   }
-  console.log(`[snoopy] proxy ready: http://127.0.0.1:${port}/v1 (loopback, ephemeral bearer key)`)
+  console.error(`[snoopy] proxy ready: http://127.0.0.1:${port}/v1 (loopback, ephemeral bearer key)`)
 
-  const child = spawn(chosen.path, [require.resolve('@deepseek-ai/dsh/lib/bin.js'), ...argv], {
+  // Same routing overlay as the published launcher; .dsh/profiles/*/cordis.patch.yml
+  // only holds the repo's own settings.
+  const dshArgs = proxyOverlayArgs(argv, path.join(ROOT, 'profile'))
+  const child = spawn(chosen.path, [require.resolve('@deepseek-ai/dsh/lib/bin.js'), ...dshArgs], {
     stdio: 'inherit',
     // dsh requires a credential for the provider route even when the proxy
     // validates none: the ephemeral key (or the caller's SNOOPY_PROXY_KEY)
@@ -92,6 +99,7 @@ async function main(argv: string[]): Promise<void> {
     env: {
       ...process.env,
       DSH_HOME: path.join(ROOT, '.dsh'),
+      SNOOPY_PORT: String(port), // read by the routing patch (profile/*.patch.yml)
       SNOOPY_PROXY_KEY: proxyKey,
     },
   })

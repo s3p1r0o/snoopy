@@ -1,12 +1,12 @@
-# Bundled headless profile for @s3p1r0o/snoopy: same routing as
-# the web profile; {{PROXY_PORT}} is substituted by the launcher at first boot.
+# Snoopy routing for the dsh headless profile (one-shot tasks), layered by
+# the launcher with `--patch` on every boot; same routing as web.patch.yml.
 - id: llm-pi-ai
   config:
     providers:
       proxy:
         apiKeyEnv: SNOOPY_PROXY_KEY
         api: openai-completions
-        baseURL: http://127.0.0.1:{{PROXY_PORT}}/v1
+        baseURL: !!js "`http://127.0.0.1:${process.env.SNOOPY_PORT ?? '8081'}/v1`"
         models:
           - id: rill-assistant
             name: rill-assistant (Rill via the embedded proxy)

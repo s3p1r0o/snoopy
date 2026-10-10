@@ -38,7 +38,7 @@
   "files": [
     "bin/launcher.js",
     "bin/postinstall.js",
-    "lib/node-select.js",
+    "lib/",
     "profile/"
   ],
   "dependencies": {

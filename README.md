@@ -23,9 +23,24 @@ The install downloads the proxy binary for your platform from this repository's 
 ```sh
 snoopy web                                         # dsh Web UI
 snoopy headless "Reply with the single word: pong" # one-shot task: prints the answer and exits
+snoopy acp                                         # Agent Client Protocol server on stdio, for orchestrators
 ```
 
-The first argument names a dsh profile; `web` and `headless` are the two snoopy routes through the proxy. dsh's other shipped profiles (`acp`, `sdk`) boot without that routing, and this dsh release has no terminal UI. Further arguments go to dsh unchanged (`snoopy web --help` lists the web app's flags). New sessions default to `rill-assistant` through the proxy; no model picker step. Profiles and sessions live under `$XDG_DATA_HOME/snoopy/dsh` (by default `~/.local/share/snoopy/dsh`).
+The first argument names a dsh profile; `web`, `headless` and `acp` are the snoopy routes through the proxy. dsh's other shipped profile (`sdk`) boots without that routing, and this dsh release has no terminal UI. Stdout belongs to dsh (the headless answer, the ACP stream); snoopy's own messages and the proxy's logs go to stderr. Further arguments go to dsh unchanged (`snoopy web --help` lists the web app's flags). New sessions default to `rill-assistant` through the proxy; no model picker step. Profiles and sessions live under `$XDG_DATA_HOME/snoopy/dsh` (by default `~/.local/share/snoopy/dsh`).
+
+Snoopy's routing ships inside the package (`profile/<name>.patch.yml`) and is layered onto dsh with `--patch` on every launch; it is never copied into your profiles. Each profile's `cordis.patch.yml` is yours, and the agent's when it manages its own plugins. Snoopy's routing wins over it for the fields it sets (provider, base URL, default model).
+
+### Driving snoopy agents (ACP)
+
+`snoopy acp` serves the standard [Agent Client Protocol](https://agentclientprotocol.com) v1 over JSON-RPC on stdin/stdout: an orchestrator spawns one process per agent and calls `initialize`, `session/new` (absolute `cwd`, MCP servers), `session/prompt`, then `session/close`; sessions persist under the dsh home and can be listed and resumed. Every session uses `rill-assistant` through the proxy (the acp bundle's own default, `deepseek-official`/`deepseek-v4-flash`, is overridden). The server can ask the client for permission (`session/request_permission`), so the orchestrator must answer those requests. Each process starts its own proxy on a free port.
+
+### Upgrading
+
+`npm install -g @s3p1r0o/snoopy@latest` replaces the launcher and fetches the proxy binary of the new version (the old one goes with the old package). The routing comes from the installed package, so it updates along. Anything else in the dsh home is upgraded by versioned migrations, applied once on the first launch and recorded in `snoopy-migrations.json`. A migration changes a file only when it recognizes what snoopy wrote there, and leaves a `.pre-<migration>` backup when it keeps your own entries around it.
+
+Upgrading from 0.1.x: the routing copies 0.1.x wrote into `profiles/{web,headless}/cordis.patch.yml` are removed; your own entries in those files stay (backup `cordis.patch.yml.pre-routing-overlay`). A copy you edited is left as is.
+
+npm 11 warns that the package's `postinstall` (the proxy download) is not covered by `allowScripts`. If your npm blocks it, the first launch downloads the binary instead, or allow it: `npm install -g --allow-scripts=@s3p1r0o/snoopy @s3p1r0o/snoopy`.
 
 ### Environment
 
@@ -47,8 +62,10 @@ The first argument names a dsh profile; `web` and `headless` are the two snoopy 
 ├── bin/harness.ts    dev launcher: proxy + dsh with the repo's .dsh profile
 ├── bin/launcher.js   published standalone launcher (npm package)
 ├── lib/node-select.js shared official-vs-distro Node selection
-├── profile/          bundled dsh profiles (web + headless) for the standalone launcher
-└── .dsh/profiles/    repo-local dsh profiles (git-tracked config)
+├── lib/profiles.js   proxy-routed profiles and the --patch routing overlay
+├── lib/migrations.js versioned dsh-home migrations (append-only)
+├── profile/          routing patches (web, headless, acp), layered with --patch by both launchers
+└── .dsh/profiles/    repo-local dsh profiles: the repo's own user layer (git-tracked)
 ```
 
 ```sh
@@ -248,8 +265,8 @@ With `/etc/snoopy-proxy/env` holding environment overrides (e.g. `RILL_ADMIN_URL
 ## DeepSeek Harness (dsh) — dev mode details
 
 - One process, one Ctrl-C: `bin/harness.ts` builds the proxy to `build/proxy` (unless `DSH_PROXY_BIN` names one), waits for `/healthz`, then boots dsh with `DSH_HOME=$PWD/.dsh`; signals reach both.
-- The repo profiles `.dsh/profiles/{web,headless}/cordis.patch.yml` declare the custom provider `proxy` (OpenAI Chat Completions, `http://127.0.0.1:8081/v1`, model `rill-assistant`, 272k context) and the `agent-default-model` plugin points new sessions at it — no picker click needed.
-- Model routing edits go there; changes apply on the next request, no restart.
+- The routing patches `profile/{web,headless,acp}.patch.yml` declare the custom provider `proxy` (OpenAI Chat Completions, `http://127.0.0.1:$SNOOPY_PORT/v1`, model `rill-assistant`, 272k context) and point the `agent-default-model` plugin (and the acp server) at it — no picker click needed. Both launchers layer them with `--patch`; `.dsh/profiles/*/cordis.patch.yml` only holds the repo's own settings.
+- Model routing edits go in `profile/*.patch.yml`; they apply on the next launch.
 - **Node compatibility.** dsh's native loader only recognizes official nodejs.org builds; Nix/NixOS-compiled Node fails its probe at boot (see [deepseek-harness#690](https://github.com/deepseek-ai/deepseek-harness/discussions/690)). Both launchers prefer `DSH_NODE`, then fnm/nvm installs, then PATH — warning which one they use. On NixOS: `fnm install 24 && fnm use 24`.
 - `node --check bin/launcher.js` + `npm test` run in CI as a Node-side syntax/test gate.
 
@@ -259,5 +276,6 @@ Common tasks are in the `justfile` (`just --list` for the menu): `just build`, `
 
 - `cd proxy && go test ./...` — handler tests in `proxy/serve_test.go`, wire-format tests pinned against generated-stub bytes in `proxy/wire_test.go`.
 - `staticcheck ./...` should stay clean (CI enforces build, vet, staticcheck, gofmt, race tests; plus Node-side syntax checks and `npm test`).
-- `npm test` — unit tests for the shared Node-selection helpers and the launcher's profile handling.
+- `npm test` — unit tests for the shared helpers (Node selection, routing overlay, migrations) and the launcher's stdout discipline.
+- Changing what snoopy keeps in the dsh home: add a migration at the end of `MIGRATIONS` in `lib/migrations.js` (never edit a released one), with a test starting from the state the previous version leaves.
 - `proxy/wire.go` pins the Rill contract: don't change encodings without re-verifying against `proxy/contract/*.proto`.

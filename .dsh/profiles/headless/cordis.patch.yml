@@ -1,20 +1,4 @@
-# Same model routing as the web profile: this repository's embedded proxy is the
-# only route and the sessions' default model (see ../../web/cordis.patch.yml).
-- id: llm-pi-ai
-  config:
-    providers:
-      proxy:
-        apiKeyEnv: SNOOPY_PROXY_KEY
-        api: openai-completions
-        baseURL: http://127.0.0.1:8081/v1
-        models:
-          - id: rill-assistant
-            name: rill-assistant (Rill via the embedded proxy)
-            contextWindow: 272000
-            maxTokens: 32768
-            input: [text]
-
-- id: agent-default-model
-  config:
-    provider: proxy
-    model: rill-assistant
+# DeepSeek Harness profile "headless" (DSH_HOME=.dsh): the repo's own user layer.
+# The proxy routing is not here: bin/harness.ts layers profile/headless.patch.yml
+# with --patch on every boot.
+[]

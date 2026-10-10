@@ -1,0 +1,4 @@
+# DeepSeek Harness profile "acp" (DSH_HOME=.dsh): the repo's own user layer.
+# The proxy routing is not here: bin/harness.ts layers profile/acp.patch.yml
+# with --patch on every boot.
+[]

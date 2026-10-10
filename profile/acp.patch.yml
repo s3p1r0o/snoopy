@@ -1,0 +1,28 @@
+# Snoopy routing for the dsh acp profile: the Agent Client Protocol server
+# (JSON-RPC over stdio) for orchestrators driving snoopy agents. Layered by the
+# launcher with `--patch` on every boot; same routing as web.patch.yml.
+- id: llm-pi-ai
+  config:
+    providers:
+      proxy:
+        apiKeyEnv: SNOOPY_PROXY_KEY
+        api: openai-completions
+        baseURL: !!js "`http://127.0.0.1:${process.env.SNOOPY_PORT ?? '8081'}/v1`"
+        models:
+          - id: rill-assistant
+            name: rill-assistant (Rill via the embedded proxy)
+            contextWindow: 272000
+            maxTokens: 32768
+            input: [text]
+
+- id: agent-default-model
+  config:
+    provider: proxy
+    model: rill-assistant
+
+# dsh-acp-app pins every ACP session to provider deepseek-official / model
+# deepseek-v4-flash on this entry; route it to the proxy instead.
+- id: acp
+  config:
+    provider: proxy
+    model: rill-assistant
