@@ -64,6 +64,8 @@ The proxy itself gives agents three web tools, so no dsh plugin is needed: `web_
 
 ### MCP servers
 
+The launchers declare one knowledge base to the proxy by default: Wikipedia, on a hosted instance of the open [wikipedia-mcp-server](https://github.com/cyanheads/wikipedia-mcp-server) over Streamable HTTP. On first boot the launcher writes `~/.config/snoopy/mcp.json` (never overwriting your own edits) and points the proxy at it; the agents get `wiki__wikipedia_search_articles`, `wiki__wikipedia_get_summary` and their siblings in the server-side tool loop. `SNOOPY_MCP=0` turns the default off, and `RILL_MCP_CONFIG` pointing at your own file replaces it.
+
 `--mcp-config PATH` (env `RILL_MCP_CONFIG`) points to a JSON file declaring MCP servers (the proxy is the client), in the usual `mcpServers` shape:
 
 ```json
@@ -76,6 +78,19 @@ The proxy itself gives agents three web tools, so no dsh plugin is needed: `web_
 ```
 
 stdio servers (`command`/`args`/`env`) are processes the proxy starts and keeps; http servers are Streamable HTTP endpoints authenticated with static headers. Every tool an enabled server announces is offered to the model as `server__tool`, next to the web tools in the same server-side tool loop; `enabled` (default true) turns a server off. A server that fails to start or to initialize within 10 s is logged and skipped, the proxy runs on; a server that dies mid-session makes its calls fail as tool errors the model can see. Results are treated as untrusted data (a stdio server's stderr is logged with its name); the config file's secrets are never logged, and the `TOOL` access log records the tool, its target and the duration only. Results are capped like fetched pages.
+
+To see at runtime what the proxy is serving, `GET /debug/tools` (bearer key, like `/v1/models`) lists every offered tool with its source (`web` or `mcp`) and each declared MCP server's connection state:
+
+```sh
+curl -s -H "Authorization: Bearer $SNOOPY_PROXY_KEY" http://127.0.0.1:8081/debug/tools
+```
+
+```json
+{
+  "tools": [{ "name": "sh__echo", "description": "...", "source": "mcp", "input_schema": { "type": "object" } }],
+  "mcpServers": [{ "name": "sh", "kind": "stdio", "connected": true, "tools": ["sh__echo"] }]
+}
+```
 
 ### Upgrading
 
