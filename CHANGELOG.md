@@ -5,6 +5,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/); the project doe
 
 ## [Unreleased]
 
+- **MCP servers.** `--mcp-config` (`RILL_MCP_CONFIG`) points to a JSON file (`mcpServers` shape) declaring MCP servers — stdio processes the proxy starts, or Streamable HTTP endpoints with static auth headers. Their tools are run server-side alongside the web tools, named `server__tool`, `enabled` per server, 10 s to connect and 60 s per call; unreachable servers are logged and skipped, and results are treated as untrusted data.
+
 - **Browser identity, no robots.txt.** Page fetches, crawls and DuckDuckGo searches present themselves as desktop Chrome 155 (User-Agent and client hints) instead of `snoopy-proxy`, and `web_crawl` no longer consults robots.txt (it blocked most crawls, and an unreachable robots.txt blocked whole sites); the 250 ms delay and page/depth limits stay. Drops the `temoto/robotstxt` dependency.
 - **SearXNG in the Docker image.** The default image bundles SearXNG (AGPL-3.0-or-later, pinned upstream commit, run unmodified on 127.0.0.1 in the container), started by the launcher as the proxy's `web_search` engine; if it cannot start, web search falls back to DuckDuckGo. About 350 MB more image.
 - **Keyless web search.** `--search-engine duckduckgo` searches DuckDuckGo's HTML page (first page, ads skipped, searches spaced by 2 s, HTTP 202 and challenge pages reported as rate limiting). The snoopy launchers use it when neither SearXNG nor Brave is configured, so `web_search` works out of the box in local and development runs.

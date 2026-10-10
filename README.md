@@ -62,6 +62,21 @@ The proxy itself gives agents three web tools, so no dsh plugin is needed: `web_
 - **Long tool loops.** A streamed request whose tool loop runs past 15 s gets its stream opened early with `: keep-alive` SSE comments; a failure after that arrives as an in-band `error` event before `[DONE]`. Without web tools, streaming is unchanged.
 - `SNOOPY_WEB_TOOLS=0` turns them off (dsh's own web tools come back); `SNOOPY_PROXY_LOG=1` shows one `TOOL` line per run.
 
+### MCP servers
+
+`--mcp-config PATH` (env `RILL_MCP_CONFIG`) points to a JSON file declaring MCP servers (the proxy is the client), in the usual `mcpServers` shape:
+
+```json
+{
+  "mcpServers": {
+    "git": { "command": "uvx", "args": ["mcp-server-git"] },
+    "remote": { "type": "http", "url": "https://mcp.example.com/mcp", "headers": { "Authorization": "Bearer ..." }, "enabled": false }
+  }
+}
+```
+
+stdio servers (`command`/`args`/`env`) are processes the proxy starts and keeps; http servers are Streamable HTTP endpoints authenticated with static headers. Every tool an enabled server announces is offered to the model as `server__tool`, next to the web tools in the same server-side tool loop; `enabled` (default true) turns a server off. A server that fails to start or to initialize within 10 s is logged and skipped, the proxy runs on; a server that dies mid-session makes its calls fail as tool errors the model can see. Results are treated as untrusted data, and the tool call arguments and results may appear in the `TOOL` access log (the config file's secrets never do).
+
 ### Upgrading
 
 `npm install -g @s3p1r0o/snoopy@latest` replaces the launcher and fetches the proxy binary of the new version (the old one goes with the old package). The routing comes from the installed package, so it updates along. Anything else in the dsh home is upgraded by versioned migrations, applied once on the first launch and recorded in `snoopy-migrations.json`. A migration changes a file only when it recognizes what snoopy wrote there, and leaves a `.pre-<migration>` backup when it keeps your own entries around it.
@@ -145,6 +160,7 @@ Flags take precedence over environment variables where a fallback exists. Run `.
 | `--web-tools`        | `RILL_WEB_TOOLS`                 | *(none)*                    | Server-side web tools the proxy runs for the model: `all`, `none`, or a comma list of `search,fetch,crawl`. The proxy owns those tool names: client tools of the same name are replaced. |
 | `--search-engine`    | `RILL_SEARCH_ENGINE`             | *(auto)*                    | `web_search` backend: `searxng`, `brave` or `duckduckgo` (keyless HTML page, never chosen implicitly by the proxy); by default whichever of SearXNG and Brave is configured. The snoopy launchers pass `duckduckgo` when neither is. |
 | `--searxng-url`      | `RILL_SEARXNG_URL`               | *(unset)*                   | SearXNG base URL (JSON format enabled). The Brave key is read from `BRAVE_SEARCH_API_KEY` only. |
+| `--mcp-config`       | `RILL_MCP_CONFIG`                | *(unset)*                   | JSON file declaring MCP servers (`mcpServers` shape, stdio `command` or `type: "http"` + `url`); their tools run server-side as `server__tool` (see [MCP servers](#mcp-servers)). |
 | `--version`          | —                                | —                           | Print the version and exit. |
 
 ## Endpoints
