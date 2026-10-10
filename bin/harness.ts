@@ -16,7 +16,8 @@ import { createRequire } from 'node:module'
 import path from 'node:path'
 import process from 'node:process'
 import { collectNodeCandidates, pickNode } from '../lib/node-select.js'
-import { overlayEnv, proxyOverlayArgs, resolvePnpm, selfImproveEnabled } from '../lib/profiles.js'
+import { agentPresetFromEnv, overlayEnv, proxyOverlayArgs, resolvePnpm, selfImproveEnabled } from '../lib/profiles.js'
+import { portIsFree, waitProxyReady } from '../lib/proxy-ready.js'
 
 const ROOT = path.resolve(new URL('./..', import.meta.url).pathname)
 
@@ -34,18 +35,6 @@ function ensureProxyBinary(): string {
   return bin
 }
 
-async function waitHealthy(port: number, timeoutMs = 10_000): Promise<boolean> {
-  const url = `http://127.0.0.1:${port}/healthz`
-  const deadline = Date.now() + timeoutMs
-  while (Date.now() < deadline) {
-    try {
-      const res = await fetch(url)
-      if (res.ok) return true
-    } catch {}
-    await new Promise(r => setTimeout(r, 200))
-  }
-  return false
-}
 
 const require = createRequire(import.meta.url)
 
@@ -78,19 +67,24 @@ async function main(argv: string[]): Promise<void> {
     process.env.RILL_PROXY_KEY ||
     process.env.SNOOPY_PROXY_KEY ||
     randomBytes(16).toString('hex')
+  if (!(await portIsFree(port, '127.0.0.1'))) {
+    throw new Error(`port ${port} is already in use (another snoopy running?); set SNOOPY_PORT to another port`)
+  }
   const proxy = spawn(proxyBin, ['--port', String(port), '--address', '127.0.0.1'], {
     stdio: ['ignore', 2, 2],
     env: { ...process.env, RILL_PROXY_KEY: proxyKey },
   })
-  if (!(await waitHealthy(port))) {
+  try {
+    await waitProxyReady(port, proxyKey, proxy)
+  } catch (err) {
     proxy.kill('SIGTERM')
-    throw new Error(`proxy on :${port} did not become healthy within 10s`)
+    throw err
   }
   console.error(`[snoopy] proxy ready: http://127.0.0.1:${port}/v1 (loopback, ephemeral bearer key)`)
 
-  // Same routing overlay as the published launcher; .dsh/profiles/*/cordis.patch.yml
-  // only holds the repo's own settings.
-  const dshArgs = proxyOverlayArgs(argv, path.join(ROOT, 'profile'), { selfImprove: selfImproveEnabled(process.env) })
+  // Same routing overlay as the published launcher; .dsh itself is local state.
+  const agentPreset = agentPresetFromEnv(process.env)
+  const dshArgs = proxyOverlayArgs(argv, path.join(ROOT, 'profile'), { selfImprove: selfImproveEnabled(process.env), agentPreset })
   const child = spawn(chosen.path, [require.resolve('@deepseek-ai/dsh/lib/bin.js'), ...dshArgs], {
     stdio: 'inherit',
     // dsh requires a credential for the provider route even when the proxy
@@ -103,8 +97,7 @@ async function main(argv: string[]): Promise<void> {
         port,
         nodePath: chosen.path,
         pnpm: resolvePnpm(require),
-        dshHome: path.join(ROOT, '.dsh'),
-        profileDir: path.join(ROOT, 'profile'),
+        agentPreset,
       }), // read by profile/*.patch.yml
       SNOOPY_PROXY_KEY: proxyKey,
     },

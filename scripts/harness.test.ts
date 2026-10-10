@@ -9,8 +9,9 @@ import { accessSync, chmodSync, constants, existsSync, mkdirSync, mkdtempSync, r
 import os from 'node:os'
 import path from 'node:path'
 import { firstFreePort } from '../bin/launcher.js'
+import { portIsFree, waitProxyReady } from '../lib/proxy-ready.js'
 import { EMPTY_PROFILE_PATCH, LEGACY_PROFILE_PATCHES, MIGRATIONS, migrateDshHome } from '../lib/migrations.js'
-import { overlayEnv, PROXY_PROFILES, proxyOverlayArgs, resolvePnpm, selfImproveEnabled } from '../lib/profiles.js'
+import { agentPresetFromEnv, overlayEnv, PROXY_PROFILES, proxyOverlayArgs, resolvePnpm, selfImproveEnabled } from '../lib/profiles.js'
 import { type NodeCandidate, parseNodeVersion, pickNode } from '../lib/node-select.js'
 
 test('parseNodeVersion extracts a leading version from a `node -v` payload', () => {
@@ -85,26 +86,32 @@ test('the self-improvement patch turns on the agent-facing plugin_manager tool',
   assert.match(patch, /- id: tool-plugin-manager\n\s+disabled: false/)
 })
 
-test('overlayEnv hands dsh the port, pnpm, skills and plugins dirs, and the chosen Node first on PATH', () => {
-  const options = { port: 8307, nodePath: '/opt/node/bin/node', pnpm: '/pkg/pnpm.mjs', dshHome: '/home/u/dsh', profileDir: '/pkg/profile' }
+test('overlayEnv hands dsh the port, pnpm, agent preset, and the chosen Node first on PATH', () => {
+  const options = { port: 8307, nodePath: '/opt/node/bin/node', pnpm: '/pkg/pnpm.mjs', agentPreset: 'cordis' }
   assert.deepEqual(overlayEnv({ PATH: '/usr/bin' }, options), {
     SNOOPY_PORT: '8307',
     PATH: ['/opt/node/bin', '/usr/bin'].join(path.delimiter),
     SNOOPY_PNPM: '/pkg/pnpm.mjs',
-    SNOOPY_SKILLS_DIR: path.join('/pkg/profile', 'skills'),
-    SNOOPY_PLUGINS_DIR: path.join('/home/u/dsh', 'plugins'),
+    SNOOPY_AGENT_PRESET: 'cordis',
   })
-  const { SNOOPY_PNPM, PATH } = overlayEnv({}, { ...options, pnpm: undefined })
-  assert.equal(SNOOPY_PNPM, undefined)
-  assert.equal(PATH, '/opt/node/bin')
+  assert.deepEqual(overlayEnv({}, { ...options, pnpm: undefined, agentPreset: undefined }), { SNOOPY_PORT: '8307', PATH: '/opt/node/bin' })
 })
 
-test('self-improvement loads the packaged skills, which keep authored plugins out of the workspace', () => {
-  const patch = readFileSync(path.join(PKG_PROFILE_DIR, 'self-improve.patch.yml'), 'utf8')
-  assert.match(patch, /- id: skill-filesystem\n\s+config:\n\s+customSkillDirs: !!js .*process\.env\.SNOOPY_SKILLS_DIR/)
-  const skill = readFileSync(path.join(PKG_PROFILE_DIR, 'skills', 'dsh-plugin-authoring', 'SKILL.md'), 'utf8')
-  assert.match(skill, /^---\nname: dsh-plugin-authoring\ndescription: .+\n/)
-  assert.match(skill, /\$SNOOPY_PLUGINS_DIR/)
+test('SNOOPY_AGENT_PRESET names the default agent preset; creator is the UI name of cordis', () => {
+  assert.equal(agentPresetFromEnv({}), undefined)
+  assert.equal(agentPresetFromEnv({ SNOOPY_AGENT_PRESET: ' ' }), undefined)
+  assert.equal(agentPresetFromEnv({ SNOOPY_AGENT_PRESET: 'Creator' }), 'cordis')
+  assert.equal(agentPresetFromEnv({ SNOOPY_AGENT_PRESET: 'ptc' }), 'ptc')
+})
+
+test('the agent-preset patch only layers onto web, the profile with presets, and only when asked', () => {
+  const preset = ['--patch', path.join(PKG_PROFILE_DIR, 'agent-preset.patch.yml')]
+  const options = { selfImprove: false, agentPreset: 'cordis' }
+  assert.deepEqual(proxyOverlayArgs(['web', '--no-open'], PKG_PROFILE_DIR, options), ['web', ...overlay('web'), ...preset, '--no-open'])
+  assert.deepEqual(proxyOverlayArgs(['acp'], PKG_PROFILE_DIR, options), ['acp', ...overlay('acp')])
+  assert.deepEqual(proxyOverlayArgs(['web'], PKG_PROFILE_DIR, { selfImprove: false, agentPreset: undefined }), ['web', ...overlay('web')])
+  const patch = readFileSync(path.join(PKG_PROFILE_DIR, 'agent-preset.patch.yml'), 'utf8')
+  assert.match(patch, /- id: agent-preset-registry\n\s+config:\n\s+default: !!js process\.env\.SNOOPY_AGENT_PRESET/)
 })
 
 test('resolvePnpm finds the bundled, executable pnpm', () => {
@@ -257,8 +264,58 @@ test('in acp mode the launcher leaves stdout to the protocol', async () => {
   await new Promise(r => (child.exitCode === null ? child.once('exit', r) : r(undefined)))
   rmSync(dir, { recursive: true, force: true })
   assert.match(stderr, /\[snoopy\] proxy ready/)
-  assert.match(stderr, /GET \/healthz 200/)
+  assert.match(stderr, /GET \/v1\/models 200/) // the readiness probe, logged by the proxy
   for (const line of stdout.split('\n').filter(Boolean)) {
     assert.doesNotThrow(() => JSON.parse(line), `non-JSON line on stdout: ${line}`)
+  }
+})
+
+/** An HTTP server on a free port answering every request with `status`. */
+async function stubServer(status: number) {
+  const { createServer } = await import('node:http')
+  const port = await firstFreePort(18600)
+  const server = createServer((_req, res) => { res.statusCode = status; res.end('{}') })
+  await new Promise<void>(r => server.listen(port, '127.0.0.1', r))
+  return { port, close: () => new Promise(r => server.close(r)) }
+}
+const longRunning = () => spawn(process.execPath, ['-e', 'setTimeout(() => {}, 30000)'])
+
+test('portIsFree tells a taken port from a free one', async () => {
+  const stub = await stubServer(200)
+  try {
+    assert.equal(await portIsFree(stub.port, '127.0.0.1'), false)
+  } finally {
+    await stub.close()
+  }
+  assert.equal(await portIsFree(stub.port, '127.0.0.1'), true)
+})
+
+test('waitProxyReady refuses a port served by another proxy (it rejects our key)', async () => {
+  const stub = await stubServer(401)
+  const child = longRunning()
+  try {
+    await assert.rejects(waitProxyReady(stub.port, 'k', child, { timeoutMs: 3000 }), /another proxy/)
+  } finally {
+    child.kill()
+    await stub.close()
+  }
+})
+
+test('waitProxyReady fails fast when our proxy exits before it is ready', async () => {
+  const port = await firstFreePort(18650)
+  const child = spawn(process.execPath, ['-e', 'process.exit(3)'])
+  const started = Date.now()
+  await assert.rejects(waitProxyReady(port, 'k', child, { timeoutMs: 8000 }), /exited/)
+  assert.ok(Date.now() - started < 4000, 'did not wait for the timeout')
+})
+
+test('waitProxyReady resolves once the proxy accepts our key', async () => {
+  const stub = await stubServer(200)
+  const child = longRunning()
+  try {
+    await waitProxyReady(stub.port, 'k', child, { timeoutMs: 3000 })
+  } finally {
+    child.kill()
+    await stub.close()
   }
 })

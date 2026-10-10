@@ -32,7 +32,8 @@ import { createRequire } from 'node:module'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { migrateDshHome } from '../lib/migrations.js'
 import { collectNodeCandidates, pickNode } from '../lib/node-select.js'
-import { overlayEnv, proxyOverlayArgs, resolvePnpm, selfImproveEnabled } from '../lib/profiles.js'
+import { agentPresetFromEnv, overlayEnv, proxyOverlayArgs, resolvePnpm, selfImproveEnabled } from '../lib/profiles.js'
+import { portIsFree, waitProxyReady } from '../lib/proxy-ready.js'
 
 const PKG_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const require = createRequire(import.meta.url)
@@ -130,18 +131,6 @@ function firstFreePort(from = 8307) {
   })
 }
 
-async function waitHealthy(port, timeoutMs = 10_000) {
-  const url = `http://127.0.0.1:${port}/healthz`
-  const deadline = Date.now() + timeoutMs
-  while (Date.now() < deadline) {
-    try {
-      const res = await fetch(url)
-      if (res.ok) return true
-    } catch {}
-    await new Promise(r => setTimeout(r, 200))
-  }
-  return false
-}
 
 // --- main ---
 
@@ -171,21 +160,27 @@ async function main(argv) {
     process.env.RILL_PROXY_KEY ||
     process.env.SNOOPY_PROXY_KEY ||
     randomBytes(16).toString('hex')
+  if (!(await portIsFree(port, proxyAddress))) {
+    throw new Error(`port ${port} is already in use (another snoopy running?); set SNOOPY_PORT to another port`)
+  }
   const proxy = spawn(proxyBin, ['--port', String(port), '--address', proxyAddress], {
     stdio: ['ignore', 2, 2], // proxy access logs to stderr: stdout is dsh's
     env: { ...process.env, RILL_PROXY_KEY: proxyKey },
   })
   process.on('exit', () => proxy.kill('SIGTERM'))
-  if (!(await waitHealthy(port))) {
+  try {
+    await waitProxyReady(port, proxyKey, proxy)
+  } catch (err) {
     proxy.kill('SIGTERM')
-    throw new Error(`proxy on :${port} did not become healthy within 10s`)
+    throw err
   }
   log(`proxy ready: http://${proxyAddress}:${port}/v1 (bearer-key protected)`)
 
   const dshHome = process.env.DSH_HOME || path.join(xdgDataHome(), 'snoopy', 'dsh')
   migrateDshHome(dshHome, log)
 
-  const dshArgs = proxyOverlayArgs(argv, path.join(PKG_ROOT, 'profile'), { selfImprove: selfImproveEnabled(process.env) })
+  const agentPreset = agentPresetFromEnv(process.env)
+  const dshArgs = proxyOverlayArgs(argv, path.join(PKG_ROOT, 'profile'), { selfImprove: selfImproveEnabled(process.env), agentPreset })
   const child = spawn(chosen.path, [require.resolve('@deepseek-ai/dsh/lib/bin.js'), ...dshArgs], {
     stdio: 'inherit',
     env: {
@@ -195,8 +190,7 @@ async function main(argv) {
         port,
         nodePath: chosen.path,
         pnpm: resolvePnpm(require),
-        dshHome: dshHome,
-        profileDir: path.join(PKG_ROOT, 'profile'),
+        agentPreset,
       }), // read by profile/*.patch.yml
       SNOOPY_PROXY_KEY: proxyKey,
     },

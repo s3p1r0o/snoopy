@@ -54,11 +54,17 @@ docker-buildx image="snoopy" platforms="linux/amd64,linux/arm64" *flags:
 docker-run *flags:
     docker run --rm -d --name snoopy-smoke -p 127.0.0.1:18081:8081 snoopy:{{version}} {{flags}}
 
-# Boot the dev harness: proxy + DeepSeek Harness (dsh), DSH_HOME=.dsh.
+# Default agent preset for new web sessions, set before the recipe name:
+# `just preset=creator harness` (creator = dsh's Creator mode, for writing
+# plugins; also standard, ptc, …). Empty: dsh's default and the Web UI's choice.
+preset := env("SNOOPY_AGENT_PRESET", "")
+
 # Usage: just harness            (default mode: web UI)
 #        just harness headless "task" | acp | --help
+#        just preset=creator harness   (new web tasks start in Creator mode)
+# Boot the dev harness (proxy + dsh, DSH_HOME=.dsh); preset=creator for Creator mode.
 harness mode="web" *args:
-    npm run harness -- {{mode}} {{args}}
+    SNOOPY_AGENT_PRESET={{quote(preset)}} npm run harness -- {{mode}} {{args}}
 
 # Cross-compile release tarballs (linux/darwin, amd64/arm64) into build/release/,
 # with a SHA256SUMS file. Each tarball carries the version-stamped binary only.

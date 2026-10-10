@@ -1,0 +1,8 @@
+# Default agent preset for new web sessions, layered by the launcher with
+# `--patch` only when SNOOPY_AGENT_PRESET is set (`creator` is accepted for
+# `cordis`, the preset the Web UI calls Creator: it mounts dsh's own
+# plugin-development skills). Without it, dsh's default (`standard`) and the
+# default remembered by the Web UI apply as usual.
+- id: agent-preset-registry
+  config:
+    default: !!js process.env.SNOOPY_AGENT_PRESET

@@ -1,4 +1,0 @@
-# DeepSeek Harness profile "headless" (DSH_HOME=.dsh): the repo's own user layer.
-# The proxy routing is not here: bin/harness.ts layers profile/headless.patch.yml
-# with --patch on every boot.
-[]

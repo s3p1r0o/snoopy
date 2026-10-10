@@ -7,9 +7,3 @@
 # Changes land in the profile's own cordis.patch.yml and package.json.
 - id: tool-plugin-manager
   disabled: false
-
-# Snoopy's packaged skills (profile/skills, through SNOOPY_SKILLS_DIR), e.g.
-# where agents author their own plugins: $SNOOPY_PLUGINS_DIR, never the workspace.
-- id: skill-filesystem
-  config:
-    customSkillDirs: !!js "[process.env.SNOOPY_SKILLS_DIR]"

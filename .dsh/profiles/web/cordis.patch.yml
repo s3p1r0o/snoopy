@@ -1,7 +1,0 @@
-# DeepSeek Harness profile "web" (DSH_HOME=.dsh): the repo's own user layer.
-# The proxy routing is not here: bin/harness.ts layers profile/web.patch.yml
-# with --patch on every boot.
-- id: ui-settings-general
-  name: "@deepseek-ai/dsh-client-ui-settings-general"
-  config:
-    welcomeNoticeVersion: 2026-09-28.1

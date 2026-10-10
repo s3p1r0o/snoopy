@@ -4,13 +4,9 @@ build/
 dist/
 bin/openai-proxy
 bin/proxy
-.dsh/.anonymous-user-id
-.dsh/sessions/
-.dsh/logs/
-.dsh/.credentials.yaml
-.dsh/storages/
-# dsh profiles: only the repo's own user layer is versioned; dsh regenerates
-# the rest at boot, and plugin installs rewrite it (package.json, lockfile, …).
-.dsh/profiles/*/*
-!.dsh/profiles/*/cordis.patch.yml
-.dsh/plugins/
+# The dev dsh home (DSH_HOME=.dsh) is local state: sessions, credentials, and
+# profiles that dsh regenerates and its Web UI and plugin installs rewrite. The
+# repo's own dsh settings live in profile/*.patch.yml.
+.dsh/
+# dsh plugin bundles authored in this workspace (see AGENTS.md).
+/bundles/

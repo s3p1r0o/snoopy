@@ -40,7 +40,7 @@ Snoopy agents can improve themselves; `SNOOPY_SELF_IMPROVE=0` turns the plugin p
 
 - **Skills.** An agent can write `.agents/skills/<name>/SKILL.md` (YAML frontmatter `name` and `description`, then instructions) in its workspace; later sessions discover it without a restart. dsh also scans `<dsh home>/skills` and `.dsh/skills`.
 - **Plugins and bundles.** The `plugin_manager` tool lets the agent list, enable and disable its profile's plugins, and install or remove bundles (with the pnpm bundled in snoopy). Changes land in the profile's own `cordis.patch.yml` and `package.json` and apply on the next launch (the Web app reloads them live).
-- **Authored plugins.** A packaged skill (`profile/skills/dsh-plugin-authoring`) tells agents to create their own plugins under `<dsh home>/plugins/<name>/` (`$SNOOPY_PLUGINS_DIR`), never in the workspace or a repository, and to install them with `plugin_manager`. In dev mode that is `.dsh/plugins/`, ignored by git.
+- **Creating plugins: Creator mode.** To have an agent write a new plugin, use dsh's Creator mode (the `cordis` preset): it mounts the harness's own plugin-development skills, with templates and API references. Pick it in the Web app's mode selector (or make it the default for new tasks there), or start with `SNOOPY_AGENT_PRESET=creator`. The `standard` mode can install and toggle plugins but has no authoring guide.
 - **Approval.** Every `plugin_manager` action needs approval: in `web` the user approves in the UI; in `acp` the orchestrator receives `session/request_permission`; `headless` refuses unless `DSH_PERMISSION_MODE=danger-full-access`. Installed bundles run as host code, outside the workspace sandbox.
 - **Fleets.** Agents sharing a dsh home share its profiles: one agent's plugin change reaches every agent on that home. Give each agent its own `DSH_HOME` to keep them apart. Outside `web`, a change takes effect when the orchestrator restarts the agent.
 
@@ -58,6 +58,7 @@ npm 11 warns that the package's `postinstall` (the proxy download) is not covere
 | -------- | ------ |
 | `RILL_ADMIN_TOKEN` | Bearer token sent to Rill. Unset: calls to Rill are anonymous. |
 | `RILL_SYSTEM_PROMPT`, `RILL_ADMIN_URL`, … | Passed through to the proxy (see [Proxy configuration](#proxy-configuration)). |
+| `SNOOPY_AGENT_PRESET` | Default agent preset for new `web` sessions, e.g. `creator` (Creator mode, `cordis`), `standard`, `ptc`. Unset: dsh's default and the one remembered by the Web UI. |
 | `SNOOPY_SELF_IMPROVE` | `0` (or `false`, `off`, `no`) hides the `plugin_manager` tool from agents; on by default. |
 | `DSH_PERMISSION_MODE` | dsh sandbox mode; `danger-full-access` lets `headless` agents run `plugin_manager` without approval. |
 | `DSH_HOME` | dsh home directory (default: `$XDG_DATA_HOME/snoopy/dsh`). |
@@ -77,13 +78,15 @@ npm 11 warns that the package's `postinstall` (the proxy download) is not covere
 ├── lib/profiles.js   proxy-routed profiles and the --patch routing overlay
 ├── lib/migrations.js versioned dsh-home migrations (append-only)
 ├── profile/          routing patches (web, headless, acp) + self-improve.patch.yml, layered with --patch
-└── .dsh/profiles/    repo-local dsh profiles: only each cordis.patch.yml (the repo's user layer) is git-tracked
+├── AGENTS.md         workspace instructions dsh agents load (where bundles go)
+└── .dsh/             dev dsh home (DSH_HOME): local state, git-ignored
 ```
 
 ```sh
 npm install          # dsh + tooling
 just harness         # proxy on 127.0.0.1:8081 + dsh Web UI (default model: rill-assistant)
 just harness headless "Reply with the single word: pong"
+just preset=creator harness   # new web tasks start in Creator mode (writing plugins)
 ```
 
 One Ctrl-C stops both; the dsh↔proxy loop is loopback-only with a per-launch ephemeral bearer key.
@@ -277,7 +280,7 @@ With `/etc/snoopy-proxy/env` holding environment overrides (e.g. `RILL_ADMIN_URL
 ## DeepSeek Harness (dsh) — dev mode details
 
 - One process, one Ctrl-C: `bin/harness.ts` builds the proxy to `build/proxy` (unless `DSH_PROXY_BIN` names one), waits for `/healthz`, then boots dsh with `DSH_HOME=$PWD/.dsh`; signals reach both.
-- The routing patches `profile/{web,headless,acp}.patch.yml` declare the custom provider `proxy` (OpenAI Chat Completions, `http://127.0.0.1:$SNOOPY_PORT/v1`, model `rill-assistant`, 272k context) and point the `agent-default-model` plugin (and the acp server) at it — no picker click needed. Both launchers layer them with `--patch`; `.dsh/profiles/*/cordis.patch.yml` only holds the repo's own settings.
+- The routing patches `profile/{web,headless,acp}.patch.yml` declare the custom provider `proxy` (OpenAI Chat Completions, `http://127.0.0.1:$SNOOPY_PORT/v1`, model `rill-assistant`, 272k context) and point the `agent-default-model` plugin (and the acp server) at it — no picker click needed. Both launchers layer them with `--patch`; the dev home `.dsh/` is local state and not versioned.
 - Model routing edits go in `profile/*.patch.yml`; they apply on the next launch.
 - **Node compatibility.** dsh's native loader only recognizes official nodejs.org builds; Nix/NixOS-compiled Node fails its probe at boot (see [deepseek-harness#690](https://github.com/deepseek-ai/deepseek-harness/discussions/690)). Both launchers prefer `DSH_NODE`, then fnm/nvm installs, then PATH — warning which one they use. On NixOS: `fnm install 24 && fnm use 24`.
 - `node --check bin/launcher.js` + `npm test` run in CI as a Node-side syntax/test gate.
