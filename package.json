@@ -1,7 +1,26 @@
 {
   "name": "@s3p1r0o/snoopy",
   "version": "0.1.0",
-  "description": "Snoopy: a DeepSeek Harness (dsh) standalone kit — embeds the proxy Go module so dsh talks to the Rill assistant through a localhost-only, ephemeral-key OpenAI-compatible endpoint.",
+  "description": "Run DeepSeek Harness (dsh) against Rill Cloud's AI assistant in one command, through an embedded OpenAI-compatible proxy (localhost-only, ephemeral key).",
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "ai-agent",
+    "openai-compatible",
+    "proxy",
+    "rill",
+    "llm",
+    "cli"
+  ],
+  "homepage": "https://github.com/s3p1r0o/snoopy#readme",
+  "bugs": {
+    "url": "https://github.com/s3p1r0o/snoopy/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/s3p1r0o/snoopy.git"
+  },
+  "author": "s3p1r0o",
   "license": "MIT",
   "publishConfig": {
     "access": "public"

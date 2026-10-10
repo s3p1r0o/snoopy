@@ -1,8 +1,47 @@
 # @s3p1r0o/snoopy
 
-A unified, self-sufficient agent harness: [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (`dsh`) driven through an embedded, OpenAI-compatible proxy written in Go (`proxy/`) — which fronts the upstream LLM behind Rill Cloud's AI service (`admin.rilldata.com`, gRPC `rill.admin.v1.AIService/Complete`).
+[![npm](https://img.shields.io/npm/v/@s3p1r0o/snoopy)](https://www.npmjs.com/package/@s3p1r0o/snoopy)
+[![ci](https://github.com/s3p1r0o/snoopy/actions/workflows/ci.yml/badge.svg)](https://github.com/s3p1r0o/snoopy/actions/workflows/ci.yml)
+[![license: MIT](https://img.shields.io/badge/license-MIT-blue)](https://github.com/s3p1r0o/snoopy/blob/main/LICENSE)
 
-The repo's model is a single assistant, `rill-assistant`; the client's `model` field is ignored.
+Run [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (`dsh`) against Rill Cloud's AI assistant in one command. Snoopy starts an embedded OpenAI-compatible proxy written in Go — loopback-only, with a per-launch ephemeral key — points dsh at it, and stops both on Ctrl-C.
+
+The proxy fronts the upstream LLM behind Rill Cloud's AI service (`admin.rilldata.com`, gRPC `rill.admin.v1.AIService/Complete`) and exposes it as a single model, `rill-assistant`; the client's `model` field is ignored. It also runs on its own, for any OpenAI chat client (see [The proxy alone](#the-proxy-alone-pure-go)).
+
+## Install
+
+Requirements: Linux or macOS on x64 or arm64, and Node ≥ 20 from an official nodejs.org build (nvm, fnm or the installer). dsh's native loader rejects distro and Nix builds of Node.
+
+```sh
+npm install -g @s3p1r0o/snoopy
+```
+
+The install downloads the proxy binary for your platform from this repository's GitHub Release matching the package version, checked against its `SHA256SUMS`. If that step could not run (offline, `--ignore-scripts`), the first launch retries; `snoopy download` fetches it explicitly.
+
+## Usage
+
+```sh
+snoopy web                                         # dsh Web UI
+snoopy tui                                         # terminal UI
+snoopy headless "Reply with the single word: pong" # one-shot task
+```
+
+Arguments after `snoopy` go to dsh unchanged (`snoopy --help` lists them). New sessions default to `rill-assistant` through the proxy; no model picker step. Profiles and sessions live under `$XDG_DATA_HOME/snoopy/dsh` (by default `~/.local/share/snoopy/dsh`).
+
+### Environment
+
+| Variable | Effect |
+| -------- | ------ |
+| `RILL_ADMIN_TOKEN` | Bearer token sent to Rill. Unset: calls to Rill are anonymous. |
+| `RILL_SYSTEM_PROMPT`, `RILL_ADMIN_URL`, … | Passed through to the proxy (see [Proxy configuration](#proxy-configuration)). |
+| `DSH_HOME` | dsh home directory (default: `$XDG_DATA_HOME/snoopy/dsh`). |
+| `SNOOPY_PORT` | Fixed proxy port (default: first free port ≥ 8307). |
+| `SNOOPY_PROXY_KEY` | Fixed proxy bearer key instead of the ephemeral one (`RILL_PROXY_KEY` wins if both are set). |
+| `SNOOPY_PROXY_BIN` | Use this proxy binary; skips the download. |
+| `SNOOPY_PROXY_VERSION` | Proxy release to download (default: the package version). |
+| `DSH_NODE` | Node binary to run dsh with (default: the best official build found). |
+
+## Quick start (development)
 
 ```
 ├── proxy/            Go module: the OpenAI-compatible HTTP proxy
@@ -13,8 +52,6 @@ The repo's model is a single assistant, `rill-assistant`; the client's `model` f
 └── .dsh/profiles/    repo-local dsh profiles (git-tracked config)
 ```
 
-## Quick start (dev)
-
 ```sh
 npm install          # dsh + tooling
 just harness         # proxy on 127.0.0.1:8081 + dsh Web UI (default model: rill-assistant)
@@ -22,16 +59,6 @@ just harness headless "Reply with the single word: pong"
 ```
 
 One Ctrl-C stops both; the dsh↔proxy loop is loopback-only with a per-launch ephemeral bearer key.
-
-## Quick start (standalone — once published)
-
-```sh
-npm install @s3p1r0o/snoopy
-npx snoopy web
-npx snoopy headless "Reply with the single word: pong"
-```
-
-The postinstall hook downloads the proxy binary for your platform (linux/darwin, x64/arm64) from the proxy repository's GitHub Releases; `npx snoopy download` (re)fetches it. The dsh home lands under `$XDG_DATA_HOME/snoopy/dsh` (override `DSH_HOME`) with bundled profiles.
 
 ## The proxy alone (pure Go)
 
@@ -157,8 +184,8 @@ Each tarball carries a single static, version-stamped `proxy` binary (CGO off, `
 Once the tag's GitHub Release exists, from a clean checkout of that tag:
 
 ```sh
-just npm-release   # dist/@s3p1r0o-snoopy-<version>.tgz + SHA256SUMS (refuses a dirty or untagged HEAD)
-npm publish dist/*.tgz   # with your npm identity; publishConfig makes the scoped package public
+just npm-release   # dist/s3p1r0o-snoopy-<version>.tgz + SHA256SUMS (refuses a dirty or untagged HEAD)
+npm publish ./dist/*.tgz   # the ./ matters (bare dist/x is read as a GitHub repo); with your npm identity; publishConfig makes the scoped package public
 ```
 
 The tag version becomes the npm package version, which tells the launcher which release assets to fetch (override with `SNOOPY_PROXY_VERSION`).
@@ -234,5 +261,5 @@ Common tasks are in the `justfile` (`just --list` for the menu): `just build`, `
 
 - `cd proxy && go test ./...` — handler tests in `proxy/serve_test.go`, wire-format tests pinned against generated-stub bytes in `proxy/wire_test.go`.
 - `staticcheck ./...` should stay clean (CI enforces build, vet, staticcheck, gofmt, race tests; plus Node-side syntax checks and `npm test`).
-- `npm test` — unit tests for the shared Node-selection helpers.
+- `npm test` — unit tests for the shared Node-selection helpers and the launcher's profile handling.
 - `proxy/wire.go` pins the Rill contract: don't change encodings without re-verifying against `proxy/contract/*.proto`.

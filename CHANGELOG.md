@@ -5,6 +5,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/); the project doe
 
 ## [Unreleased]
 
+- **npm page.** README opens with install, usage and environment for package users (development notes follow); `package.json` gains repository, homepage, bugs, keywords and author; MIT `LICENSE` file added (shipped in the package).
+- **Docs.** `npm publish ./dist/*.tgz`: without the `./`, npm reads `dist/<file>` as a GitHub repository.
+
+## [0.1.0] - 2026-10-10
+
 - **Releases.** Tags are `v<version>`; pushing one runs the `release` workflow, which publishes the four proxy tarballs (linux/darwin × amd64/arm64) and `SHA256SUMS` as the GitHub Release the npm launcher downloads from. Asset names and the stamped version drop the `v`.
 - **npm package.** Publishable (no longer `private`, public scoped access). `just npm-release` takes the package version from the release tag, refuses a dirty or untagged HEAD, and leaves `package.json` unchanged.
 - **Launcher.** An existing dsh profile is retargeted at each launch's proxy port; previously the first boot's port stayed in place and dsh lost the proxy when the port changed.
