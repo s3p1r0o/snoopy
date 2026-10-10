@@ -178,3 +178,30 @@ test('renderNotice lists every source with its pin, licence file and skills', ()
   assert.match(notice, /\| \[superpowers\]\(https:\/\/github\.com\/obra\/superpowers\) \| v6\.4\.1 \(`5bf4e78`\) \| MIT, `LICENSES\/superpowers\.txt` \| brainstorming \|/)
   assert.match(notice, /\| \[@fission-ai\/openspec\]\(https:\/\/www\.npmjs\.com\/package\/@fission-ai\/openspec\) \| 1\.14\.1 \| MIT, `LICENSES\/openspec\.txt` \| openspec-explore \|/)
 })
+
+test('the committed skills tree matches the catalog and ships with the package and the image', () => {
+  const catalog = JSON.parse(readFileSync(path.join(PKG_ROOT, 'skills', 'catalog.json'), 'utf8'))
+  const names = catalog.sources.flatMap((s: { skills: string[] }) => s.skills.map(bundledName)).sort()
+  assert.equal(names.length, 23)
+  assert.deepEqual(readdirSync(BUNDLED).sort(), names)
+  const cited = new Set(catalog.sources.flatMap((s: { citedNotBundled?: string[] }) => s.citedNotBundled ?? []))
+  for (const name of names) {
+    const front = parseFrontmatter(readFileSync(path.join(BUNDLED, name, 'SKILL.md'), 'utf8'))
+    assert.equal(front?.name, name)
+    assert.ok(front?.description, `${name} has a description`)
+    for (const f of readdirSync(path.join(BUNDLED, name), { recursive: true })) {
+      const file = path.join(BUNDLED, name, String(f))
+      if (!statSync(file).isFile()) continue
+      for (const [, ref] of readFileSync(file, 'utf8').matchAll(/superpowers:([a-z0-9-]+)/g)) {
+        assert.ok(cited.has(ref), `${file} still references superpowers:${ref}`)
+      }
+    }
+  }
+  assert.equal(readFileSync(path.join(PKG_ROOT, 'skills', 'NOTICE.md'), 'utf8'), renderNotice(catalog))
+  for (const s of catalog.sources) assert.ok(existsSync(path.join(PKG_ROOT, 'skills', 'LICENSES', `${s.id}.txt`)), s.id)
+  const manifest = JSON.parse(readFileSync(path.join(PKG_ROOT, 'package.json'), 'utf8'))
+  assert.ok(manifest.files.includes('skills/'), 'package.json files ships skills/')
+  const openspec = catalog.sources.find((s: { npm?: string }) => s.npm === '@fission-ai/openspec')
+  assert.equal(manifest.dependencies['@fission-ai/openspec'], openspec.version)
+  assert.match(readFileSync(path.join(PKG_ROOT, 'Dockerfile'), 'utf8'), /^COPY skills\/ skills\/$/m)
+})

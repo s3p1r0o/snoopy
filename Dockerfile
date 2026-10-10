@@ -67,6 +67,7 @@ RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund
 COPY bin/ bin/
 COPY lib/ lib/
 COPY profile/ profile/
+COPY skills/ skills/
 COPY --from=build-go /proxy bin/proxy
 # CA bundle for the proxy's gRPC-TLS to admin.rilldata.com (slim lacks it on
 # some bases; be explicit either way).

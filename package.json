@@ -39,7 +39,8 @@
     "bin/launcher.js",
     "bin/postinstall.js",
     "lib/",
-    "profile/"
+    "profile/",
+    "skills/"
   ],
   "dependencies": {
     "@deepseek-ai/dsh": "0.2.0-rc.2",
