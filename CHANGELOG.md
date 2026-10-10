@@ -3,6 +3,12 @@
 All notable changes to this project are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/); the project does not yet follow SemVer (single-binary tool, version stamped at build time).
 
+## [Unreleased]
+
+- **Agent instructions.** Two default texts in `lib/defaults/`, English and not tied to any technology. The launchers send the system prompt to the proxy as `RILL_SYSTEM_PROMPT`: `rill-assistant` is a route name, not a role; server-side tool results do not stay in the conversation; server-side and harness tools must not share a step. An explicit `RILL_SYSTEM_PROMPT` wins, `SNOOPY_SYSTEM_PROMPT=0` opts out. They also write working rules to `$DSH_HOME/AGENTS.md`, which dsh loads before each project's own instructions; snoopy rewrites it at every launch, keeps a global file it did not write as `AGENTS.md.bak-<timestamp>`, and `SNOOPY_AGENTS_MD=0` leaves it alone.
+- **Clock.** `profile/agentic.patch.yml`, layered after the routing patch of every proxy-routed profile, mounts dsh's `dsh-time-context`: the model gets the current date and time (at most every 10 minutes, browser zone or the machine's). Without a browser (headless, acp) it is told to ask about otherwise-unqualified dates and times.
+- **Web prompt.** `profile/web.patch.yml` turns off `surfaceContext` of dsh's Web app: its prompt sections, written for dsh's own monorepo, named the snoopy repo (or the global npm tree) "the DeepSeek Harness implementation checkout" and described a dev watcher (`pnpm run dev:web`) snoopy does not have.
+
 ## [0.2.0] - 2026-10-10
 
 - **Default MCP knowledge base.** The launchers hand the proxy a default `--mcp-config` (`~/.config/snoopy/mcp.json`, written once, never overwriting user edits): Wikipedia over Streamable HTTP on an open [wikipedia-mcp-server](https://github.com/cyanheads/wikipedia-mcp-server) instance, offered to the agents as `wiki__wikipedia_*` server-side tools. `SNOOPY_MCP=0` opts out; `RILL_MCP_CONFIG` with your own file takes precedence.

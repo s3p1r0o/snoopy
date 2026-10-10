@@ -38,6 +38,10 @@ Snoopy's routing ships inside the package (`profile/<name>.patch.yml`) and is la
 
 Snoopy agents can improve themselves; `SNOOPY_SELF_IMPROVE=0` turns the plugin part off.
 
+### Agent instructions
+
+Snoopy gives its agents two default texts, in `lib/defaults/`. The system prompt states facts about the environment: `rill-assistant` is a route name, not a role; the proxy's server-side tools (`web_*`, MCP `server__tool`) do not keep their results in the conversation, and must not be mixed with the harness's own tools in one step. The launchers hand it to the proxy as `RILL_SYSTEM_PROMPT`; an explicit `RILL_SYSTEM_PROMPT` replaces it and `SNOOPY_SYSTEM_PROMPT=0` turns it off. The global `AGENTS.md` holds working rules, not tied to any technology (understand before changing, small changes, verify before claiming done, ask before anything destructive or external). It is written to `$DSH_HOME/AGENTS.md`, which dsh loads before each project's own `AGENTS.md`/`CLAUDE.md`, and snoopy rewrites it at every launch so upgrades bring the new rules: put personal rules in your projects' instruction files. A global `AGENTS.md` snoopy did not write is kept as `AGENTS.md.bak-<timestamp>` once; `SNOOPY_AGENTS_MD=0` leaves the file alone. In the `web` profile, the routing patch also turns off two prompt sections of dsh's Web app that only fit dsh's own monorepo (they called the snoopy install "the DeepSeek Harness implementation checkout" and described dsh's dev watcher).
+
 - **Skills.** An agent can write `.agents/skills/<name>/SKILL.md` (YAML frontmatter `name` and `description`, then instructions) in its workspace; later sessions discover it without a restart. dsh also scans `<dsh home>/skills` and `.dsh/skills`.
 - **Plugins and bundles.** The `plugin_manager` tool lets the agent list, enable and disable its profile's plugins, and install or remove bundles (with the pnpm bundled in snoopy). Changes land in the profile's own `cordis.patch.yml` and `package.json` and apply on the next launch (the Web app reloads them live).
 - **Creating plugins: Creator mode.** To have an agent write a new plugin, use dsh's Creator mode (the `cordis` preset): it mounts the harness's own plugin-development skills, with templates and API references. Pick it in the Web app's mode selector (or make it the default for new tasks there), or start with `SNOOPY_AGENT_PRESET=creator`. The `standard` mode can install and toggle plugins but has no authoring guide.
@@ -111,6 +115,9 @@ npm 11 warns that the package's `postinstall` (the proxy download) is not covere
 | `DSH_PERMISSION_MODE` | dsh sandbox mode; `danger-full-access` lets `headless` agents run `plugin_manager` without approval. |
 | `DSH_HOME` | dsh home directory (default: `$XDG_DATA_HOME/snoopy/dsh`). |
 | `SNOOPY_WEB_TOOLS` | `0` (or `false`, `off`, `no`) turns the proxy's web tools off; on by default. |
+| `SNOOPY_MCP` | `0` (or `false`, `off`, `no`) drops the default MCP knowledge base (Wikipedia); `RILL_MCP_CONFIG` replaces it. |
+| `SNOOPY_SYSTEM_PROMPT` | `0` (or `false`, `off`, `no`) sends no default system prompt; an explicit `RILL_SYSTEM_PROMPT` replaces it. |
+| `SNOOPY_AGENTS_MD` | `0` (or `false`, `off`, `no`) leaves `$DSH_HOME/AGENTS.md` alone instead of rewriting it with snoopy's working rules. |
 | `RILL_SEARXNG_URL` | SearXNG base URL for `web_search`, e.g. `http://127.0.0.1:8888`. |
 | `BRAVE_SEARCH_API_KEY` | Brave Search API key for `web_search` (used when no SearXNG URL is set). |
 | `SNOOPY_PROXY_LOG` | `1` shows the proxy's startup line and access logs (one line per request) on stderr; off by default. Proxy errors always show. |
@@ -129,7 +136,7 @@ npm 11 warns that the package's `postinstall` (the proxy download) is not covere
 ├── lib/node-select.js shared official-vs-distro Node selection
 ├── lib/profiles.js   proxy-routed profiles and the --patch routing overlay
 ├── lib/migrations.js versioned dsh-home migrations (append-only)
-├── profile/          routing patches (web, headless, acp) + self-improve.patch.yml, layered with --patch
+├── profile/          routing patches (web, headless, acp) + agentic.patch.yml + self-improve.patch.yml, layered with --patch
 ├── AGENTS.md         workspace instructions dsh agents load (where bundles go)
 └── .dsh/             dev dsh home (DSH_HOME): local state, git-ignored
 ```
@@ -338,6 +345,7 @@ With `/etc/snoopy-proxy/env` holding environment overrides (e.g. `RILL_ADMIN_URL
 
 - One process, one Ctrl-C: `bin/harness.ts` builds the proxy to `build/proxy` (unless `DSH_PROXY_BIN` names one), waits for `/healthz`, then boots dsh with `DSH_HOME=$PWD/.dsh`; signals reach both.
 - The routing patches `profile/{web,headless,acp}.patch.yml` declare the custom provider `proxy` (OpenAI Chat Completions, `http://127.0.0.1:$SNOOPY_PORT/v1`, model `rill-assistant`, 272k context) and point the `agent-default-model` plugin (and the acp server) at it — no picker click needed. Both launchers layer them with `--patch`; the dev home `.dsh/` is local state and not versioned.
+- `profile/agentic.patch.yml` follows the routing patch in every proxy-routed profile: snoopy's defaults for agentic development. It mounts dsh's clock (`dsh-time-context`, shipped with dsh but in no profile), so the model knows the current date and time (at most one reading every 10 minutes, in the browser's zone or the machine's). Turn it off with `- id: time-context` / `disabled: true` in the profile's `cordis.patch.yml`.
 - Model routing edits go in `profile/*.patch.yml`; they apply on the next launch.
 - **Node compatibility.** dsh's native loader only recognizes official nodejs.org builds; Nix/NixOS-compiled Node fails its probe at boot (see [deepseek-harness#690](https://github.com/deepseek-ai/deepseek-harness/discussions/690)). Both launchers prefer `DSH_NODE`, then fnm/nvm installs, then PATH — warning which one they use. On NixOS: `fnm install 24 && fnm use 24`.
 - `node --check bin/launcher.js` + `npm test` run in CI as a Node-side syntax/test gate.
