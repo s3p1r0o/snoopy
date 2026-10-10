@@ -11,7 +11,7 @@ import path from 'node:path'
 import { firstFreePort } from '../bin/launcher.js'
 import { portIsFree, proxyStdio, waitProxyReady } from '../lib/proxy-ready.js'
 import { EMPTY_PROFILE_PATCH, LEGACY_PROFILE_PATCHES, MIGRATIONS, migrateDshHome } from '../lib/migrations.js'
-import { agentPresetFromEnv, overlayEnv, PROXY_PROFILES, proxyOverlayArgs, resolvePnpm, selfImproveEnabled } from '../lib/profiles.js'
+import { agentPresetFromEnv, overlayEnv, PROXY_PROFILES, proxyOverlayArgs, resolvePnpm, selfImproveEnabled, webToolsSpec } from '../lib/profiles.js'
 import { type NodeCandidate, parseNodeVersion, pickNode } from '../lib/node-select.js'
 
 test('parseNodeVersion extracts a leading version from a `node -v` payload', () => {
@@ -324,4 +324,12 @@ test('proxy access logs are off by default; SNOOPY_PROXY_LOG=1 sends them to std
   assert.deepEqual(proxyStdio({}), ['ignore', 'ignore', 2]) // errors still reach stderr
   assert.deepEqual(proxyStdio({ SNOOPY_PROXY_LOG: '0' }), ['ignore', 'ignore', 2])
   for (const value of ['1', 'true', 'yes']) assert.deepEqual(proxyStdio({ SNOOPY_PROXY_LOG: value }), ['ignore', 2, 2], value)
+})
+
+test('webToolsSpec turns the proxy web tools on unless opted out; an explicit RILL_WEB_TOOLS wins', () => {
+  assert.equal(webToolsSpec({}), 'all')
+  for (const value of ['0', 'false', 'OFF', 'no']) assert.equal(webToolsSpec({ SNOOPY_WEB_TOOLS: value }), 'none', value)
+  assert.equal(webToolsSpec({ SNOOPY_WEB_TOOLS: '1' }), 'all')
+  assert.equal(webToolsSpec({ SNOOPY_WEB_TOOLS: '0', RILL_WEB_TOOLS: 'fetch' }), 'fetch')
+  assert.equal(webToolsSpec({ RILL_WEB_TOOLS: ' ' }), 'all')
 })

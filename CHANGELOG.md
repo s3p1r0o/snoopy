@@ -5,6 +5,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/); the project doe
 
 ## [Unreleased]
 
+- **Web tools in the proxy.** `--web-tools` (`RILL_WEB_TOOLS`) makes the proxy run `web_fetch` (main content as Markdown: Readability, charset decoding), `web_crawl` (same-host, robots.txt, up to 20 pages) and `web_search` (SearXNG via `RILL_SEARXNG_URL`, or Brave via `BRAVE_SEARCH_API_KEY`) in a server-side tool loop; it owns those tool names, replacing a client's own. Pages come from public addresses only (checked at connect time), with redirect, size and time limits. Long streamed completions get SSE keep-alives. The snoopy launchers turn the tools on (`SNOOPY_WEB_TOOLS=0` opts out), replacing dsh's DeepSeek-only `web_search`.
 - **ACP.** `snoopy acp` serves the Agent Client Protocol on stdio for orchestrators, routed through the proxy (overrides the acp bundle's own `deepseek-official` model). Also in dev mode (`just harness acp`).
 - **Routing from the package.** Both launchers layer `profile/<name>.patch.yml` with `--patch` on every boot (port through `SNOOPY_PORT`) instead of copying it into the dsh home, so an upgrade brings the new routing and `cordis.patch.yml` stays the user's (and the agent's) layer.
 - **Migrations.** `lib/migrations.js`: ordered, append-only migrations applied once per dsh home and recorded in `snoopy-migrations.json`. The first one removes the 0.1.x routing copies, keeping user entries (with a backup) and leaving edited copies alone.

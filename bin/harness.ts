@@ -16,7 +16,7 @@ import { createRequire } from 'node:module'
 import path from 'node:path'
 import process from 'node:process'
 import { collectNodeCandidates, pickNode } from '../lib/node-select.js'
-import { agentPresetFromEnv, overlayEnv, proxyOverlayArgs, resolvePnpm, selfImproveEnabled } from '../lib/profiles.js'
+import { agentPresetFromEnv, overlayEnv, proxyOverlayArgs, resolvePnpm, selfImproveEnabled, webToolsSpec } from '../lib/profiles.js'
 import { portIsFree, proxyStdio, waitProxyReady } from '../lib/proxy-ready.js'
 
 const ROOT = path.resolve(new URL('./..', import.meta.url).pathname)
@@ -72,7 +72,7 @@ async function main(argv: string[]): Promise<void> {
   }
   const proxy = spawn(proxyBin, ['--port', String(port), '--address', '127.0.0.1'], {
     stdio: proxyStdio(process.env), // access logs only with SNOOPY_PROXY_LOG=1
-    env: { ...process.env, RILL_PROXY_KEY: proxyKey },
+    env: { ...process.env, RILL_PROXY_KEY: proxyKey, RILL_WEB_TOOLS: webToolsSpec(process.env) },
   })
   try {
     await waitProxyReady(port, proxyKey, proxy)

@@ -44,6 +44,24 @@ Snoopy agents can improve themselves; `SNOOPY_SELF_IMPROVE=0` turns the plugin p
 - **Approval.** Every `plugin_manager` action needs approval: in `web` the user approves in the UI; in `acp` the orchestrator receives `session/request_permission`; `headless` refuses unless `DSH_PERMISSION_MODE=danger-full-access`. Installed bundles run as host code, outside the workspace sandbox.
 - **Fleets.** Agents sharing a dsh home share its profiles: one agent's plugin change reaches every agent on that home. Give each agent its own `DSH_HOME` to keep them apart. Outside `web`, a change takes effect when the orchestrator restarts the agent.
 
+### Web tools
+
+The proxy itself gives agents three web tools, so no dsh plugin is needed: `web_fetch` reads one page and returns its main content as Markdown (Readability extraction, charset decoding), `web_crawl` follows a site's links on the same host (breadth first, robots.txt honoured, up to 20 pages), and `web_search` queries a search engine you configure. The proxy runs them server-side, so the dsh UI shows the final answer, not the tool calls. They replace dsh's own `web_search` and `web_fetch` (dsh's search needs a DeepSeek key).
+
+- **Search engine.** A self-hosted SearXNG (free, no key; its JSON format must be enabled) or the Brave Search API. Without either, `web_search` is not offered.
+
+  ```sh
+  mkdir -p ~/.config/searxng
+  printf 'use_default_settings: true\nserver:\n  secret_key: "change-me"\n  limiter: false\nsearch:\n  formats: [html, json]\n' > ~/.config/searxng/settings.yml
+  docker run -d --name searxng -p 127.0.0.1:8888:8080 -v ~/.config/searxng:/etc/searxng searxng/searxng
+  RILL_SEARXNG_URL=http://127.0.0.1:8888 just harness
+  ```
+
+  or `BRAVE_SEARCH_API_KEY=… just harness`.
+- **Safety.** Pages are fetched from public addresses only (checked on the address actually dialed), with at most 5 redirects, 5 MiB and 20 s per page; results reach the model marked as untrusted content. JavaScript is not run: a page that renders its text with JavaScript comes back empty, and the tool says so.
+- **Long tool loops.** A streamed request whose tool loop runs past 15 s gets its stream opened early with `: keep-alive` SSE comments; a failure after that arrives as an in-band `error` event before `[DONE]`. Without web tools, streaming is unchanged.
+- `SNOOPY_WEB_TOOLS=0` turns them off (dsh's own web tools come back); `SNOOPY_PROXY_LOG=1` shows one `TOOL` line per run.
+
 ### Upgrading
 
 `npm install -g @s3p1r0o/snoopy@latest` replaces the launcher and fetches the proxy binary of the new version (the old one goes with the old package). The routing comes from the installed package, so it updates along. Anything else in the dsh home is upgraded by versioned migrations, applied once on the first launch and recorded in `snoopy-migrations.json`. A migration changes a file only when it recognizes what snoopy wrote there, and leaves a `.pre-<migration>` backup when it keeps your own entries around it.
@@ -62,6 +80,9 @@ npm 11 warns that the package's `postinstall` (the proxy download) is not covere
 | `SNOOPY_SELF_IMPROVE` | `0` (or `false`, `off`, `no`) hides the `plugin_manager` tool from agents; on by default. |
 | `DSH_PERMISSION_MODE` | dsh sandbox mode; `danger-full-access` lets `headless` agents run `plugin_manager` without approval. |
 | `DSH_HOME` | dsh home directory (default: `$XDG_DATA_HOME/snoopy/dsh`). |
+| `SNOOPY_WEB_TOOLS` | `0` (or `false`, `off`, `no`) turns the proxy's web tools off; on by default. |
+| `RILL_SEARXNG_URL` | SearXNG base URL for `web_search`, e.g. `http://127.0.0.1:8888`. |
+| `BRAVE_SEARCH_API_KEY` | Brave Search API key for `web_search` (used when no SearXNG URL is set). |
 | `SNOOPY_PROXY_LOG` | `1` shows the proxy's startup line and access logs (one line per request) on stderr; off by default. Proxy errors always show. |
 | `SNOOPY_PORT` | Fixed proxy port (default: first free port ≥ 8307). |
 | `SNOOPY_PROXY_KEY` | Fixed proxy bearer key instead of the ephemeral one (`RILL_PROXY_KEY` wins if both are set). |
@@ -121,6 +142,9 @@ Flags take precedence over environment variables where a fallback exists. Run `.
 | `--token`            | `RILL_ADMIN_TOKEN`               | *(unset)*                   | Bearer token sent upstream to Rill. Unset: calls to Rill are anonymous. |
 | `--max-input-tokens` | `RILL_AI_SERVE_MAX_INPUT_TOKENS` | `272000`                    | Reject chat requests whose estimated input exceeds this many tokens. `0` disables the local check. |
 | `--system-prompt`    | `RILL_SYSTEM_PROMPT`             | *(empty — nothing sent)*    | System message sent to the upstream **before** each conversation's own system messages. Empty default: nothing injected. |
+| `--web-tools`        | `RILL_WEB_TOOLS`                 | *(none)*                    | Server-side web tools the proxy runs for the model: `all`, `none`, or a comma list of `search,fetch,crawl`. The proxy owns those tool names: client tools of the same name are replaced. |
+| `--search-engine`    | `RILL_SEARCH_ENGINE`             | *(auto)*                    | `web_search` backend: `searxng` or `brave`; by default whichever is configured, SearXNG first. |
+| `--searxng-url`      | `RILL_SEARXNG_URL`               | *(unset)*                   | SearXNG base URL (JSON format enabled). The Brave key is read from `BRAVE_SEARCH_API_KEY` only. |
 | `--version`          | —                                | —                           | Print the version and exit. |
 
 ## Endpoints

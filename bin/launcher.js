@@ -32,7 +32,7 @@ import { createRequire } from 'node:module'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { migrateDshHome } from '../lib/migrations.js'
 import { collectNodeCandidates, pickNode } from '../lib/node-select.js'
-import { agentPresetFromEnv, overlayEnv, proxyOverlayArgs, resolvePnpm, selfImproveEnabled } from '../lib/profiles.js'
+import { agentPresetFromEnv, overlayEnv, proxyOverlayArgs, resolvePnpm, selfImproveEnabled, webToolsSpec } from '../lib/profiles.js'
 import { portIsFree, proxyStdio, waitProxyReady } from '../lib/proxy-ready.js'
 
 const PKG_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
@@ -165,7 +165,7 @@ async function main(argv) {
   }
   const proxy = spawn(proxyBin, ['--port', String(port), '--address', proxyAddress], {
     stdio: proxyStdio(process.env), // access logs only with SNOOPY_PROXY_LOG=1
-    env: { ...process.env, RILL_PROXY_KEY: proxyKey },
+    env: { ...process.env, RILL_PROXY_KEY: proxyKey, RILL_WEB_TOOLS: webToolsSpec(process.env) },
   })
   process.on('exit', () => proxy.kill('SIGTERM'))
   try {
