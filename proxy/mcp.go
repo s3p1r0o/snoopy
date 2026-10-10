@@ -114,9 +114,9 @@ func parseMCPConfig(path string) ([]enabledServer, error) {
 	return out, nil
 }
 
-const (
-	initTimeout = 10 * time.Second
-	callTimeout = 60 * time.Second
+var (
+	initTimeout = 10 * time.Second // connect + initialize + list tools, per server
+	callTimeout = 60 * time.Second // one tool call; fixed by design
 )
 
 // mcpTool is one tool of one connected server.
@@ -200,21 +200,34 @@ func safeTransport() http.RoundTripper {
 
 // newStdioCmd builds the process command of a stdio server: the proxy's
 // inherited environment (servers need PATH as much as anything) with the
-// config's env added on top, winning conflicts. Its stderr goes into the log
-// stream, one buffered line, so server chatter never interleaves.
+// config's env added on top, winning conflicts, so an operator override of
+// e.g. NO_COLOR cannot be silently shadowed by the proxy's own environment.
 func newStdioCmd(spec *mcpServerSpec) *exec.Cmd {
 	cmd := exec.Command(spec.command, spec.args...)
-	cmd.Env = append(os.Environ(), envList(spec.env)...)
-	cmd.Stderr = io.Discard
+	cmd.Env = baseEnvWith(spec.env)
+	cmd.Stderr = io.Discard // server chatter never interleaves with proxy logs
 	return cmd
 }
 
-func envList(env map[string]string) []string {
-	var out []string
-	for k, v := range env {
-		out = append(out, k+"="+v)
+// baseEnvWith returns os.Environ, with each of overrides' keys replaced
+// (keys not in the inherited environment are appended).
+func baseEnvWith(overrides map[string]string) []string {
+	env := os.Environ()
+	for k, v := range overrides {
+		override := k + "=" + v
+		replaced := false
+		for i, e := range env {
+			if strings.HasPrefix(e, k+"=") {
+				env[i] = override
+				replaced = true
+				break
+			}
+		}
+		if !replaced {
+			env = append(env, override)
+		}
 	}
-	return out
+	return env
 }
 
 // listTools caches one def per tool the server announces, named server__tool.

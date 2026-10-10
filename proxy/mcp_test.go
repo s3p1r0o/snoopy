@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -290,4 +291,49 @@ func TestWebToolsMCPUnknownTool(t *testing.T) {
 	if !strings.Contains(out, "failed") && !strings.Contains(out, "unknown") {
 		t.Fatalf("run output = %q", out)
 	}
+}
+
+func TestStdioCommandBuildsEnvironment(t *testing.T) {
+	t.Setenv("FOO", "inherited")
+	spec := mcpServerSpec{name: "local", command: "sh", args: []string{"-c", "true"}, env: map[string]string{"FOO": "bar"}}
+	cmd := newStdioCmd(&spec)
+	if len(cmd.Args) != 3 || cmd.Args[0] != "sh" || cmd.Args[1] != "-c" {
+		t.Fatalf("args = %v", cmd.Args)
+	}
+	var foundPath, foundFoo bool
+	for _, e := range cmd.Env {
+		if e == "FOO=bar" {
+			foundFoo = true
+		}
+		if e == "FOO=inherited" {
+			t.Errorf("config env must win over the inherited FOO, but FOO=inherited is present")
+		}
+		if strings.HasPrefix(e, "PATH=") {
+			foundPath = true
+		}
+	}
+	if !foundPath || !foundFoo {
+		t.Fatalf("env must inherit PATH and add FOO=bar, got %v", cmd.Env)
+	}
+}
+
+func TestStdioServerInitTimeout(t *testing.T) {
+	// A server that never answers initialize: the manager logs and moves on.
+	path := writeMCPConfig(t, `{"mcpServers":{"slow":{"command":"sh","args":["-c","sleep 30"]}}}`)
+	savedInit := initTimeout
+	initTimeout = 300 * time.Millisecond
+	defer func() { initTimeout = savedInit }()
+	var log bytes.Buffer
+	m, err := startMCPServers(path, &log)
+	if err != nil || m == nil {
+		t.Fatalf("start = (%v, %v)", m, err)
+	}
+	if got := len(m.tools); got != 0 {
+		t.Fatalf("tools = %d, want 0", got)
+	}
+	if !strings.Contains(log.String(), "unavailable") {
+		t.Fatalf("log = %q", log.String())
+	}
+	// The (timed-out) helper process must not outlive the test.
+	m.close()
 }
