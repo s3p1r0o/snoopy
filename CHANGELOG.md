@@ -5,6 +5,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/); the project doe
 
 ## [Unreleased]
 
+- **just recipes.** `harness`, `run` and `docker-run` pass their arguments to the command as given (`[positional-arguments]`): an apostrophe in a question used to break `just harness headless "…l'été…"` with a shell syntax error.
 - **Web tools in the proxy.** `--web-tools` (`RILL_WEB_TOOLS`) makes the proxy run `web_fetch` (main content as Markdown: Readability, charset decoding), `web_crawl` (same-host, robots.txt, up to 20 pages) and `web_search` (SearXNG via `RILL_SEARXNG_URL`, or Brave via `BRAVE_SEARCH_API_KEY`) in a server-side tool loop; it owns those tool names, replacing a client's own. Pages come from public addresses only (checked at connect time), with redirect, size and time limits. Long streamed completions get SSE keep-alives. The snoopy launchers turn the tools on (`SNOOPY_WEB_TOOLS=0` opts out), replacing dsh's DeepSeek-only `web_search`.
 - **ACP.** `snoopy acp` serves the Agent Client Protocol on stdio for orchestrators, routed through the proxy (overrides the acp bundle's own `deepseek-official` model). Also in dev mode (`just harness acp`).
 - **Routing from the package.** Both launchers layer `profile/<name>.patch.yml` with `--patch` on every boot (port through `SNOOPY_PORT`) instead of copying it into the dsh home, so an upgrade brings the new routing and `cordis.patch.yml` stays the user's (and the agent's) layer.

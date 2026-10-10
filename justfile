@@ -34,9 +34,10 @@ node-test:
 check: build lint test
 
 # Start the proxy alone (pass secrets via env vars, not flags: `ps` shows them).
+[positional-arguments]
 run *flags:
     go build -C proxy -o ../build/proxy -ldflags "-X main.version={{version}}" .
-    ./build/proxy {{flags}}
+    ./build/proxy "$@"
 
 # Build the images: snoopy (full kit; default target) / --target proxy.
 docker-build:
@@ -51,20 +52,24 @@ docker-buildx image="snoopy" platforms="linux/amd64,linux/arm64" *flags:
     docker buildx build --platform {{platforms}} --build-arg VERSION={{version}} -t {{image}}:{{version}} {{flags}} .
 
 # Smoke-test the Docker image on loopback 127.0.0.1:18081/healthz, then `docker stop`.
+[positional-arguments]
 docker-run *flags:
-    docker run --rm -d --name snoopy-smoke -p 127.0.0.1:18081:8081 snoopy:{{version}} {{flags}}
+    docker run --rm -d --name snoopy-smoke -p 127.0.0.1:18081:8081 snoopy:{{version}} "$@"
 
 # Default agent preset for new web sessions, set before the recipe name:
 # `just preset=creator harness` (creator = dsh's Creator mode, for writing
 # plugins; also standard, ptc, …). Empty: dsh's default and the Web UI's choice.
 preset := env("SNOOPY_AGENT_PRESET", "")
 
+# (positional arguments: the mode and args reach npm as given, quotes and
+# apostrophes included, instead of being pasted into the shell command.)
 # Usage: just harness            (default mode: web UI)
 #        just harness headless "task" | acp | --help
 #        just preset=creator harness   (new web tasks start in Creator mode)
 # Boot the dev harness (proxy + dsh, DSH_HOME=.dsh); preset=creator for Creator mode.
+[positional-arguments]
 harness mode="web" *args:
-    SNOOPY_AGENT_PRESET={{quote(preset)}} npm run harness -- {{mode}} {{args}}
+    SNOOPY_AGENT_PRESET={{quote(preset)}} npm run harness -- "$@"
 
 # Cross-compile release tarballs (linux/darwin, amd64/arm64) into build/release/,
 # with a SHA256SUMS file. Each tarball carries the version-stamped binary only.
