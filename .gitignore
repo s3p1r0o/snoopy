@@ -10,3 +10,6 @@ bin/proxy
 .dsh/
 # dsh plugin bundles authored in this workspace (see AGENTS.md).
 /bundles/
+
+# Superpowers specs and plans: local working documents, not shipped docs.
+docs/superpowers/
