@@ -34,6 +34,12 @@ adds to them and wins where they disagree.
 
 - Check versions, APIs and documentation with your tools instead of relying on memory; prefer primary sources and cite them.
 
+## Skills
+
+- Before acting, check whether a skill matches the task and load it; the user can also invoke one with /<name>.
+- Spec-driven work: in a project with an `openspec/` directory, use the OpenSpec skills (openspec-explore, openspec-propose, openspec-apply-change, …); otherwise use brainstorming, then writing-plans, then executing-plans or subagent-driven-development. Never run both workflows on the same change.
+- A loaded skill's explicit steps take precedence over these general rules, except anything destructive or visible outside the workspace (push, publish, deploy): that still needs the user's approval.
+
 ## Work efficiently
 
 - Keep output small: search before reading, read large files in ranges, and do not dump whole files or logs.

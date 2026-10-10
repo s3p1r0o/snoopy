@@ -32,6 +32,7 @@ import { createRequire } from 'node:module'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { installAgentsMd, systemPromptEnv } from '../lib/agent-prompt.js'
 import { mcpConfigEnv } from '../lib/mcp-config.js'
+import { skillsEnv } from '../lib/skills.js'
 import { migrateDshHome } from '../lib/migrations.js'
 import { collectNodeCandidates, pickNode } from '../lib/node-select.js'
 import { agentPresetFromEnv, overlayEnv, proxyOverlayArgs, resolvePnpm, searchEngineSpec, selfImproveEnabled, webToolsSpec } from '../lib/profiles.js'
@@ -202,17 +203,20 @@ async function main(argv) {
 
   const agentPreset = agentPresetFromEnv(process.env)
   const dshArgs = proxyOverlayArgs(argv, path.join(PKG_ROOT, 'profile'), { selfImprove: selfImproveEnabled(process.env), agentPreset })
+  const overlay = overlayEnv(process.env, {
+    port,
+    nodePath: chosen.path,
+    pnpm: resolvePnpm(require),
+    agentPreset,
+  })
   const child = spawn(chosen.path, [require.resolve('@deepseek-ai/dsh/lib/bin.js'), ...dshArgs], {
     stdio: 'inherit',
     env: {
       ...process.env,
       DSH_HOME: dshHome,
-      ...overlayEnv(process.env, {
-        port,
-        nodePath: chosen.path,
-        pnpm: resolvePnpm(require),
-        agentPreset,
-      }), // read by profile/*.patch.yml
+      ...overlay, // read by profile/*.patch.yml
+      // The bundled skills and the OpenSpec CLI they call, see lib/skills.js.
+      ...skillsEnv(process.env, PKG_ROOT, { dshHome, nodePath: chosen.path, path: overlay.PATH }),
       SNOOPY_PROXY_KEY: proxyKey,
     },
   })

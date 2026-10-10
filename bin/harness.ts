@@ -17,6 +17,7 @@ import path from 'node:path'
 import process from 'node:process'
 import { installAgentsMd, systemPromptEnv } from '../lib/agent-prompt.js'
 import { mcpConfigEnv } from '../lib/mcp-config.js'
+import { skillsEnv } from '../lib/skills.js'
 import { collectNodeCandidates, pickNode } from '../lib/node-select.js'
 import { agentPresetFromEnv, overlayEnv, proxyOverlayArgs, resolvePnpm, searchEngineSpec, selfImproveEnabled, webToolsSpec } from '../lib/profiles.js'
 import { portIsFree, proxyStdio, waitProxyReady } from '../lib/proxy-ready.js'
@@ -90,6 +91,12 @@ async function main(argv: string[]): Promise<void> {
   // Same routing overlay as the published launcher; .dsh itself is local state.
   const agentPreset = agentPresetFromEnv(process.env)
   const dshArgs = proxyOverlayArgs(argv, path.join(ROOT, 'profile'), { selfImprove: selfImproveEnabled(process.env), agentPreset })
+  const overlay = overlayEnv(process.env, {
+    port,
+    nodePath: chosen.path,
+    pnpm: resolvePnpm(require),
+    agentPreset,
+  })
   const child = spawn(chosen.path, [require.resolve('@deepseek-ai/dsh/lib/bin.js'), ...dshArgs], {
     stdio: 'inherit',
     // dsh requires a credential for the provider route even when the proxy
@@ -98,12 +105,9 @@ async function main(argv: string[]): Promise<void> {
     env: {
       ...process.env,
       DSH_HOME: dshHome,
-      ...overlayEnv(process.env, {
-        port,
-        nodePath: chosen.path,
-        pnpm: resolvePnpm(require),
-        agentPreset,
-      }), // read by profile/*.patch.yml
+      ...overlay, // read by profile/*.patch.yml
+      // The bundled skills and the OpenSpec CLI they call, see lib/skills.js.
+      ...skillsEnv(process.env, ROOT, { dshHome, nodePath: chosen.path, path: overlay.PATH }),
       SNOOPY_PROXY_KEY: proxyKey,
     },
   })

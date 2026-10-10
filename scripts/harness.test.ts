@@ -501,3 +501,10 @@ test('installAgentsMd creates a missing dsh home', () => {
     rmSync(root, { recursive: true, force: true })
   }
 })
+
+test('the global AGENTS.md arbitrates between OpenSpec and the brainstorming chain', () => {
+  assert.match(DEFAULT_AGENTS_MD, /## Skills\n/)
+  assert.match(DEFAULT_AGENTS_MD, /openspec\/` directory, use the OpenSpec skills/)
+  assert.match(DEFAULT_AGENTS_MD, /Never run both workflows on the same change\./)
+  assert.match(DEFAULT_AGENTS_MD, /explicit steps take precedence over these general rules/)
+})
