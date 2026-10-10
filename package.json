@@ -32,7 +32,7 @@
   "scripts": {
     "harness": "node bin/harness.ts",
     "start": "npm run harness",
-    "test": "node --test scripts/harness.test.ts",
+    "test": "node --test scripts/harness.test.ts scripts/skills.test.ts",
     "postinstall": "node bin/postinstall.js"
   },
   "files": [
@@ -43,6 +43,7 @@
   ],
   "dependencies": {
     "@deepseek-ai/dsh": "0.2.0-rc.2",
+    "@fission-ai/openspec": "1.14.1",
     "pnpm": "11.28.0"
   },
   "engines": {
