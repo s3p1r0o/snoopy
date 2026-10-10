@@ -8,7 +8,9 @@ package main
 //     loopback or link-local address cannot reach the proxy's own network;
 //   - ignores HTTP(S)_PROXY, which would hide the real target from that check;
 //   - follows at most maxRedirects redirects, each one re-checked on connect;
-//   - caps the decoded body at maxFetchBodyBytes and flags the cut.
+//   - caps the decoded body at maxFetchBodyBytes and flags the cut;
+//   - presents itself as desktop Chrome (User-Agent and client hints), since
+//     many sites refuse clients that do not look like a browser.
 
 import (
 	"context"
@@ -30,6 +32,22 @@ const (
 	fetchTimeout      = 20 * time.Second
 	maxRedirects      = 5
 )
+
+// chromeUserAgent and browserHeaders make requests look like desktop Chrome on
+// Windows, the most common browser: bump the version with Chrome's stable
+// channel (155: October 2026). Go's TLS fingerprint still differs from
+// Chrome's, so bot walls that check it (Cloudflare and the like) still refuse.
+const chromeUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36"
+
+var browserHeaders = map[string]string{
+	"User-Agent":                chromeUserAgent,
+	"Accept":                    "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+	"Accept-Language":           "en-US,en;q=0.9",
+	"Sec-Ch-Ua":                 `"Google Chrome";v="155", "Chromium";v="155", "Not?A_Brand";v="99"`,
+	"Sec-Ch-Ua-Mobile":          "?0",
+	"Sec-Ch-Ua-Platform":        `"Windows"`,
+	"Upgrade-Insecure-Requests": "1",
+}
 
 // errBlockedAddress marks a connection refused by the public-address check.
 var errBlockedAddress = errors.New("refusing to connect to a non-public address")
@@ -82,13 +100,12 @@ func publicAddr(a netip.Addr) bool {
 
 // fetcher performs the web tools' page requests.
 type fetcher struct {
-	client    *http.Client
-	userAgent string
+	client *http.Client
 }
 
 // newFetcher builds a fetcher; allowPrivate disables the public-address check
 // and exists only for tests, whose pages are served from 127.0.0.1.
-func newFetcher(userAgent string, allowPrivate bool) *fetcher {
+func newFetcher(allowPrivate bool) *fetcher {
 	dialer := &net.Dialer{
 		Timeout: 10 * time.Second,
 		Control: func(_, address string, _ syscall.RawConn) error {
@@ -103,7 +120,6 @@ func newFetcher(userAgent string, allowPrivate bool) *fetcher {
 		},
 	}
 	return &fetcher{
-		userAgent: userAgent,
 		client: &http.Client{
 			Timeout: fetchTimeout,
 			Transport: &http.Transport{
@@ -146,8 +162,9 @@ func (f *fetcher) get(ctx context.Context, rawURL string) (*page, error) {
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("User-Agent", f.userAgent)
-	req.Header.Set("Accept", "text/html,application/xhtml+xml,text/plain;q=0.9,*/*;q=0.1")
+	for name, value := range browserHeaders {
+		req.Header.Set(name, value)
+	}
 	resp, err := f.client.Do(req)
 	if err != nil {
 		return nil, err

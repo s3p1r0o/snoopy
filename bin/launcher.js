@@ -32,8 +32,9 @@ import { createRequire } from 'node:module'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { migrateDshHome } from '../lib/migrations.js'
 import { collectNodeCandidates, pickNode } from '../lib/node-select.js'
-import { agentPresetFromEnv, overlayEnv, proxyOverlayArgs, resolvePnpm, selfImproveEnabled, webToolsSpec } from '../lib/profiles.js'
+import { agentPresetFromEnv, overlayEnv, proxyOverlayArgs, resolvePnpm, searchEngineSpec, selfImproveEnabled, webToolsSpec } from '../lib/profiles.js'
 import { portIsFree, proxyStdio, waitProxyReady } from '../lib/proxy-ready.js'
+import { embeddedSearxngDir, startSearxng } from '../lib/searxng.js'
 
 const PKG_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const require = createRequire(import.meta.url)
@@ -160,12 +161,29 @@ async function main(argv) {
     process.env.RILL_PROXY_KEY ||
     process.env.SNOOPY_PROXY_KEY ||
     randomBytes(16).toString('hex')
+  // The Docker image bundles SearXNG: start it as the web_search engine. If it
+  // cannot start, web_search falls back to DuckDuckGo instead of failing.
+  const proxyEnv = { ...process.env }
+  let searxng
+  const searxngDir = embeddedSearxngDir(process.env)
+  if (searxngDir) {
+    try {
+      // SearXNG logs everything to stderr: silent unless SNOOPY_PROXY_LOG asks for logs.
+      const stdio = proxyStdio(process.env)[1] === 2 ? ['ignore', 2, 2] : 'ignore'
+      searxng = await startSearxng({ dir: searxngDir, port: await firstFreePort(8890), stdio })
+      process.on('exit', () => searxng.child.kill('SIGTERM'))
+      proxyEnv.RILL_SEARXNG_URL = searxng.url
+      log(`SearXNG ready: ${searxng.url} (web_search engine)`)
+    } catch (err) {
+      warn(`bundled SearXNG did not start (${err instanceof Error ? err.message : err}); web_search uses DuckDuckGo`)
+    }
+  }
   if (!(await portIsFree(port, proxyAddress))) {
     throw new Error(`port ${port} is already in use (another snoopy running?); set SNOOPY_PORT to another port`)
   }
   const proxy = spawn(proxyBin, ['--port', String(port), '--address', proxyAddress], {
     stdio: proxyStdio(process.env), // access logs only with SNOOPY_PROXY_LOG=1
-    env: { ...process.env, RILL_PROXY_KEY: proxyKey, RILL_WEB_TOOLS: webToolsSpec(process.env) },
+    env: { ...proxyEnv, RILL_PROXY_KEY: proxyKey, RILL_WEB_TOOLS: webToolsSpec(proxyEnv), RILL_SEARCH_ENGINE: searchEngineSpec(proxyEnv) },
   })
   process.on('exit', () => proxy.kill('SIGTERM'))
   try {
@@ -198,10 +216,12 @@ async function main(argv) {
   const stop = sig => {
     child.kill(sig)
     proxy.kill(sig)
+    searxng?.child.kill(sig)
   }
   for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => stop(sig))
   child.on('exit', code => {
     proxy.kill('SIGTERM')
+    searxng?.child.kill('SIGTERM')
     process.exitCode = code
   })
   await new Promise(() => {}) // hold open while children run

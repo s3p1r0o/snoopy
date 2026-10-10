@@ -46,9 +46,9 @@ Snoopy agents can improve themselves; `SNOOPY_SELF_IMPROVE=0` turns the plugin p
 
 ### Web tools
 
-The proxy itself gives agents three web tools, so no dsh plugin is needed: `web_fetch` reads one page and returns its main content as Markdown (Readability extraction, charset decoding), `web_crawl` follows a site's links on the same host (breadth first, robots.txt honoured, up to 20 pages), and `web_search` queries a search engine you configure. The proxy runs them server-side, so the dsh UI shows the final answer, not the tool calls. They replace dsh's own `web_search` and `web_fetch` (dsh's search needs a DeepSeek key).
+The proxy itself gives agents three web tools, so no dsh plugin is needed: `web_fetch` reads one page and returns its main content as Markdown (Readability extraction, charset decoding), `web_crawl` follows a site's links on the same host (breadth first, up to 20 pages), and `web_search` queries a search engine you configure. The proxy runs them server-side, so the dsh UI shows the final answer, not the tool calls. They replace dsh's own `web_search` and `web_fetch` (dsh's search needs a DeepSeek key).
 
-- **Search engine.** A self-hosted SearXNG (free, no key; its JSON format must be enabled) or the Brave Search API. Without either, `web_search` is not offered.
+- **Search engine.** The Docker image bundles SearXNG, a metasearch engine started on loopback inside the container, which queries many engines at once (see [Docker](#docker)). Elsewhere, without configuration, snoopy searches DuckDuckGo's keyless HTML page: fine for low volume, spaced by 2 s, and DuckDuckGo may throttle bursts (the agent is then told to use `web_fetch`). For more, a self-hosted SearXNG (free, no key; its JSON format must be enabled) or the Brave Search API take over when configured.
 
   ```sh
   mkdir -p ~/.config/searxng
@@ -58,7 +58,7 @@ The proxy itself gives agents three web tools, so no dsh plugin is needed: `web_
   ```
 
   or `BRAVE_SEARCH_API_KEY=… just harness`.
-- **Safety.** Pages are fetched from public addresses only (checked on the address actually dialed), with at most 5 redirects, 5 MiB and 20 s per page; results reach the model marked as untrusted content. JavaScript is not run: a page that renders its text with JavaScript comes back empty, and the tool says so.
+- **Safety.** Pages are fetched from public addresses only (checked on the address actually dialed), with at most 5 redirects, 5 MiB and 20 s per page; results reach the model marked as untrusted content. Requests present themselves as desktop Chrome (User-Agent and client hints) and the crawl does not consult robots.txt, as a person's browser would not; it stays polite with a 250 ms delay and 20 pages at most. Paywalls and bot walls that check more than headers (such as TLS fingerprints) still refuse. JavaScript is not run: a page that renders its text with JavaScript comes back empty, and the tool says so.
 - **Long tool loops.** A streamed request whose tool loop runs past 15 s gets its stream opened early with `: keep-alive` SSE comments; a failure after that arrives as an in-band `error` event before `[DONE]`. Without web tools, streaming is unchanged.
 - `SNOOPY_WEB_TOOLS=0` turns them off (dsh's own web tools come back); `SNOOPY_PROXY_LOG=1` shows one `TOOL` line per run.
 
@@ -143,7 +143,7 @@ Flags take precedence over environment variables where a fallback exists. Run `.
 | `--max-input-tokens` | `RILL_AI_SERVE_MAX_INPUT_TOKENS` | `272000`                    | Reject chat requests whose estimated input exceeds this many tokens. `0` disables the local check. |
 | `--system-prompt`    | `RILL_SYSTEM_PROMPT`             | *(empty — nothing sent)*    | System message sent to the upstream **before** each conversation's own system messages. Empty default: nothing injected. |
 | `--web-tools`        | `RILL_WEB_TOOLS`                 | *(none)*                    | Server-side web tools the proxy runs for the model: `all`, `none`, or a comma list of `search,fetch,crawl`. The proxy owns those tool names: client tools of the same name are replaced. |
-| `--search-engine`    | `RILL_SEARCH_ENGINE`             | *(auto)*                    | `web_search` backend: `searxng` or `brave`; by default whichever is configured, SearXNG first. |
+| `--search-engine`    | `RILL_SEARCH_ENGINE`             | *(auto)*                    | `web_search` backend: `searxng`, `brave` or `duckduckgo` (keyless HTML page, never chosen implicitly by the proxy); by default whichever of SearXNG and Brave is configured. The snoopy launchers pass `duckduckgo` when neither is. |
 | `--searxng-url`      | `RILL_SEARXNG_URL`               | *(unset)*                   | SearXNG base URL (JSON format enabled). The Brave key is read from `BRAVE_SEARCH_API_KEY` only. |
 | `--version`          | —                                | —                           | Print the version and exit. |
 
@@ -265,6 +265,7 @@ just docker-buildx <registry>/snoopy linux/amd64,linux/arm64 --push   # tags <re
 ```
 
 Notes:
+- **Bundled SearXNG.** The default image includes [SearXNG](https://github.com/searxng/searxng) (AGPL-3.0-or-later), pinned to one upstream commit (`SEARXNG_COMMIT` in the Dockerfile) and run unmodified as its own process on 127.0.0.1 inside the container; the launcher starts it before the proxy and uses it for `web_search` (falling back to DuckDuckGo if it cannot start). Its source and licence are in `/opt/searxng` in the image. It is skipped when `RILL_SEARXNG_URL` or `RILL_SEARCH_ENGINE` is set, or with `SNOOPY_WEB_TOOLS=0`; `SNOOPY_PROXY_LOG=1` also shows its logs. It adds about 350 MB to the image.
 - dsh **refuses** non-loopback `--host` by upstream design (an agent UI is a remote-code surface): reach the Web UI with `--network host` (loopback on the host) or your own SSH/k8s tunnel — not by exposing the container port.
 - The runtime user is `node`; dsh state lives on the `/data` volume (`DSH_HOME=/data/dsh`). Mount it to keep sessions across restarts.
 - `RILL_ADMIN_TOKEN` (upstream auth), `RILL_SYSTEM_PROMPT`, etc. pass as `-e` flags; the dsh↔proxy loop is loopback-only with an ephemeral bearer key unless you export `RILL_PROXY_KEY`.

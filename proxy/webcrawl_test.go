@@ -9,7 +9,8 @@ import (
 )
 
 // crawlSite serves a small site: / links to /a, /b, /private/x and an external
-// page; /a links deeper to /a/deep; robots.txt disallows /private.
+// page; /a links deeper to /a/deep; robots is served as /robots.txt (which the
+// crawl must ignore).
 func crawlSite(t *testing.T, robots string) *httptest.Server {
 	t.Helper()
 	pages := map[string]string{
@@ -45,25 +46,24 @@ func crawlTest(t *testing.T, srv *httptest.Server, start string, opt crawlOption
 	old := crawlDelay
 	crawlDelay = 0
 	t.Cleanup(func() { crawlDelay = old })
-	out, err := newFetcher("test", true).crawl(context.Background(), srv.URL+start, opt)
+	out, err := newFetcher(true).crawl(context.Background(), srv.URL+start, opt)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return out
 }
 
-func TestCrawlHonoursRobotsAndHost(t *testing.T) {
-	srv := crawlSite(t, "User-agent: *\nDisallow: /private\n")
+func TestCrawlStaysOnHostAndIgnoresRobots(t *testing.T) {
+	// robots.txt is not consulted: a Disallow does not stop the crawl.
+	srv := crawlSite(t, "User-agent: *\nDisallow: /\n")
 	out := crawlTest(t, srv, "/", crawlOptions{maxPages: 10, maxDepth: 2})
-	for _, want := range []string{"page a", "page b", "page deep", "1 skipped by robots.txt"} {
+	for _, want := range []string{"page a", "page b", "page deep", "secret", "(5 pages fetched)"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in:\n%s", want, out)
 		}
 	}
-	for _, unwanted := range []string{"secret", "elsewhere.example/\n"} {
-		if strings.Contains(out, unwanted) {
-			t.Errorf("unexpected %q in:\n%s", unwanted, out)
-		}
+	if strings.Contains(out, "elsewhere.example/\n") || strings.Contains(out, "robots") {
+		t.Errorf("left the host or mentioned robots.txt:\n%s", out)
 	}
 }
 
@@ -81,25 +81,10 @@ func TestCrawlLimitsDepthPagesAndPrefix(t *testing.T) {
 	}
 }
 
-func TestCrawlUnreachableRobotsDisallowsAll(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/robots.txt" {
-			http.Error(w, "down", http.StatusServiceUnavailable)
-			return
-		}
-		w.Write([]byte("<p>content</p>"))
-	}))
-	defer srv.Close()
-	out := crawlTest(t, srv, "/", crawlOptions{maxPages: 5, maxDepth: 1})
-	if !strings.Contains(out, "(0 pages fetched, 1 skipped by robots.txt)") {
-		t.Fatalf("out:\n%s", out)
-	}
-}
-
 func TestCrawlFollowsAStartRedirectToAnotherHost(t *testing.T) {
 	// apex -> www style: the start URL redirects to another host, whose pages
-	// and robots.txt the crawl must then use.
-	target := crawlSite(t, "User-agent: *\nDisallow: /private\n")
+	// the crawl must then follow.
+	target := crawlSite(t, "")
 	apex := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/robots.txt" {
 			http.NotFound(w, r)
@@ -109,7 +94,7 @@ func TestCrawlFollowsAStartRedirectToAnotherHost(t *testing.T) {
 	}))
 	t.Cleanup(apex.Close)
 	out := crawlTest(t, apex, "/", crawlOptions{maxPages: 10, maxDepth: 2})
-	for _, want := range []string{"page a", "page b", "1 skipped by robots.txt"} {
+	for _, want := range []string{"page a", "page b", "secret"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in:\n%s", want, out)
 		}

@@ -53,7 +53,7 @@ func TestFetchRefusesPrivateTargets(t *testing.T) {
 		w.Write([]byte("secret"))
 	}))
 	defer srv.Close()
-	f := newFetcher("test", false)
+	f := newFetcher(false)
 	// The loopback listener, by IP and through a hostname that resolves to it.
 	for _, target := range []string{srv.URL, strings.Replace(srv.URL, "127.0.0.1", "localhost", 1)} {
 		if _, err := f.get(context.Background(), target); !errors.Is(err, errBlockedAddress) {
@@ -63,7 +63,7 @@ func TestFetchRefusesPrivateTargets(t *testing.T) {
 }
 
 func TestFetchRejectsNonHTTPURLs(t *testing.T) {
-	f := newFetcher("test", true)
+	f := newFetcher(true)
 	for _, target := range []string{"file:///etc/passwd", "ftp://example.com/x", "/relative", "example.com"} {
 		if _, err := f.get(context.Background(), target); err == nil || !strings.Contains(err.Error(), "only absolute http(s) URLs") {
 			t.Errorf("get(%q) error = %v, want an invalid URL error", target, err)
@@ -83,7 +83,7 @@ func TestFetchCapsDecompressedBody(t *testing.T) {
 		w.Write(gz.Bytes())
 	}))
 	defer srv.Close()
-	p, err := newFetcher("test", true).get(context.Background(), srv.URL)
+	p, err := newFetcher(true).get(context.Background(), srv.URL)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,23 +101,35 @@ func TestFetchStopsRedirectLoops(t *testing.T) {
 		http.Redirect(w, r, srv.URL+r.URL.Path+"x", http.StatusFound)
 	}))
 	defer srv.Close()
-	if _, err := newFetcher("test", true).get(context.Background(), srv.URL+"/a"); err == nil || !strings.Contains(err.Error(), "redirects") {
+	if _, err := newFetcher(true).get(context.Background(), srv.URL+"/a"); err == nil || !strings.Contains(err.Error(), "redirects") {
 		t.Fatalf("error = %v, want a redirect limit error", err)
 	}
 }
 
-func TestFetchSendsUserAgentAndKeepsErrorStatuses(t *testing.T) {
-	var ua string
+func TestFetchPresentsAsChromeAndKeepsErrorStatuses(t *testing.T) {
+	var got http.Header
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ua = r.UserAgent()
+		got = r.Header.Clone()
 		http.NotFound(w, r)
 	}))
 	defer srv.Close()
-	p, err := newFetcher("snoopy-proxy/test", true).get(context.Background(), srv.URL)
+	p, err := newFetcher(true).get(context.Background(), srv.URL)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p.Status != http.StatusNotFound || ua != "snoopy-proxy/test" {
-		t.Fatalf("status=%d ua=%q", p.Status, ua)
+	if p.Status != http.StatusNotFound {
+		t.Fatalf("status = %d", p.Status)
+	}
+	if ua := got.Get("User-Agent"); !strings.Contains(ua, "Chrome/155.0.0.0") || !strings.HasPrefix(ua, "Mozilla/5.0 (Windows NT 10.0; Win64; x64)") {
+		t.Errorf("User-Agent = %q", ua)
+	}
+	for name, want := range map[string]string{
+		"Sec-Ch-Ua":          `"Google Chrome";v="155"`,
+		"Sec-Ch-Ua-Platform": `"Windows"`,
+		"Accept-Language":    "en-US",
+	} {
+		if !strings.Contains(got.Get(name), want) {
+			t.Errorf("%s = %q, want it to contain %q", name, got.Get(name), want)
+		}
 	}
 }

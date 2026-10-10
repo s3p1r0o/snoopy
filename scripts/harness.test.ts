@@ -10,8 +10,9 @@ import os from 'node:os'
 import path from 'node:path'
 import { firstFreePort } from '../bin/launcher.js'
 import { portIsFree, proxyStdio, waitProxyReady } from '../lib/proxy-ready.js'
+import { embeddedSearxngDir, searxngSettings, startSearxng } from '../lib/searxng.js'
 import { EMPTY_PROFILE_PATCH, LEGACY_PROFILE_PATCHES, MIGRATIONS, migrateDshHome } from '../lib/migrations.js'
-import { agentPresetFromEnv, overlayEnv, PROXY_PROFILES, proxyOverlayArgs, resolvePnpm, selfImproveEnabled, webToolsSpec } from '../lib/profiles.js'
+import { agentPresetFromEnv, overlayEnv, PROXY_PROFILES, proxyOverlayArgs, resolvePnpm, searchEngineSpec, selfImproveEnabled, webToolsSpec } from '../lib/profiles.js'
 import { type NodeCandidate, parseNodeVersion, pickNode } from '../lib/node-select.js'
 
 test('parseNodeVersion extracts a leading version from a `node -v` payload', () => {
@@ -332,4 +333,68 @@ test('webToolsSpec turns the proxy web tools on unless opted out; an explicit RI
   assert.equal(webToolsSpec({ SNOOPY_WEB_TOOLS: '1' }), 'all')
   assert.equal(webToolsSpec({ SNOOPY_WEB_TOOLS: '0', RILL_WEB_TOOLS: 'fetch' }), 'fetch')
   assert.equal(webToolsSpec({ RILL_WEB_TOOLS: ' ' }), 'all')
+})
+
+test('searchEngineSpec falls back to DuckDuckGo only when no other engine is configured', () => {
+  assert.equal(searchEngineSpec({}), 'duckduckgo')
+  assert.equal(searchEngineSpec({ RILL_SEARXNG_URL: 'http://127.0.0.1:8888' }), '')
+  assert.equal(searchEngineSpec({ BRAVE_SEARCH_API_KEY: 'k' }), '')
+  assert.equal(searchEngineSpec({ RILL_SEARCH_ENGINE: 'brave', BRAVE_SEARCH_API_KEY: 'k' }), 'brave')
+  assert.equal(searchEngineSpec({ RILL_SEARCH_ENGINE: ' ' }), 'duckduckgo')
+})
+
+test('the embedded SearXNG starts only in the image, with web tools on and no engine chosen', () => {
+  const image = { SNOOPY_SEARXNG_DIR: '/opt/searxng' }
+  assert.equal(embeddedSearxngDir(image), '/opt/searxng')
+  assert.equal(embeddedSearxngDir({}), undefined) // npm install, dev harness
+  for (const env of [
+    { ...image, SNOOPY_WEB_TOOLS: '0' },
+    { ...image, RILL_SEARXNG_URL: 'http://searx.lan' },
+    { ...image, RILL_SEARCH_ENGINE: 'brave' },
+  ]) assert.equal(embeddedSearxngDir(env), undefined, JSON.stringify(env))
+})
+
+test('searxngSettings enables JSON, turns the bot limiter off, and uses the given secret', () => {
+  const yml = searxngSettings('s3cr3t')
+  assert.match(yml, /^  secret_key: "s3cr3t"$/m)
+  assert.match(yml, /^  limiter: false$/m)
+  assert.match(yml, /^  formats: \[html, json\]$/m)
+  // Tor-only engines cannot load without a Tor proxy and log errors at boot.
+  assert.match(yml, /^use_default_settings:\n  engines:\n    remove:\n      - ahmia\n      - torch$/m)
+})
+
+test('startSearxng runs granian from the SearXNG dir and waits for /healthz', async () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'snoopy-searxng-'))
+  try {
+    mkdirSync(path.join(dir, '.venv', 'bin'), { recursive: true })
+    const fake = path.join(dir, '.venv', 'bin', 'granian')
+    // Stands in for granian: checks its arguments and environment, then serves /healthz.
+    writeFileSync(fake, `#!/usr/bin/env node
+const fs = require('node:fs'), path = require('node:path')
+if (!fs.existsSync(path.join(path.dirname(process.env.SEARXNG_SETTINGS_PATH), 'limiter.toml'))) process.exit(4)
+if (process.argv[2] !== 'searx.webapp:app' || process.env.GRANIAN_INTERFACE !== 'wsgi' ||
+    process.env.GRANIAN_HOST !== '127.0.0.1' || !fs.readFileSync(process.env.SEARXNG_SETTINGS_PATH, 'utf8').includes('json')) process.exit(3)
+require('node:http').createServer((req, res) => {
+  const ok = req.url === '/healthz' && req.headers['x-real-ip'] === '127.0.0.1'
+  res.statusCode = ok ? 200 : 403
+  res.end(ok ? 'OK' : '')
+}).listen(Number(process.env.GRANIAN_PORT), '127.0.0.1')
+`)
+    chmodSync(fake, 0o755)
+    const port = await firstFreePort(18700)
+    const searx = await startSearxng({ dir, port, stdio: 'ignore', timeoutMs: 5000 })
+    try {
+      assert.equal(searx.url, `http://127.0.0.1:${port}`)
+      assert.equal(await (await fetch(searx.url + '/healthz', { headers: { 'X-Real-IP': '127.0.0.1' } })).text(), 'OK')
+    } finally {
+      searx.child.kill()
+    }
+    // A granian that exits at once fails fast instead of waiting for the timeout.
+    writeFileSync(fake, '#!/usr/bin/env node\nprocess.exit(1)\n')
+    const started = Date.now()
+    await assert.rejects(startSearxng({ dir, port, stdio: 'ignore', timeoutMs: 5000 }), /exited/)
+    assert.ok(Date.now() - started < 3000)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
 })

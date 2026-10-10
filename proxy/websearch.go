@@ -1,19 +1,25 @@
 package main
 
 // websearch.go backs the web_search tool with a search engine the operator
-// configures: a SearXNG instance (self-hosted, its JSON API enabled) or the
-// Brave Search API. Engine endpoints are operator-chosen, so they are called
-// with a plain client (a local SearXNG is the usual setup), not the fetcher.
+// configures: a SearXNG instance (self-hosted, its JSON API enabled), the
+// Brave Search API, or DuckDuckGo's keyless HTML page (only when asked for).
+// Engine endpoints are operator-chosen, so they are called with a plain
+// client (a local SearXNG is the usual setup), not the fetcher.
 
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
+
+	"github.com/PuerkitoBio/goquery"
 )
 
 const (
@@ -21,6 +27,10 @@ const (
 	maxSearchResults     = 10
 	searchTimeout        = 15 * time.Second
 	braveEndpoint        = "https://api.search.brave.com/res/v1/web/search"
+	ddgEndpoint          = "https://html.duckduckgo.com/html/"
+	// ddgMinInterval spaces DuckDuckGo searches: it publishes no API for web
+	// results and answers bursts with a challenge page.
+	ddgMinInterval = 2 * time.Second
 )
 
 type searchResult struct {
@@ -33,8 +43,9 @@ type searchEngine interface {
 	search(ctx context.Context, query string, limit int) ([]searchResult, error)
 }
 
-// newSearchEngine picks the engine: kind "searxng" or "brave", or "" to use
-// whichever is configured (SearXNG first). It returns nil, nil when none is.
+// newSearchEngine picks the engine: kind "searxng", "brave" or "duckduckgo",
+// or "" to use whichever is configured (SearXNG first, then Brave). It returns
+// nil, nil when none is: DuckDuckGo, which scrapes a page, is never implied.
 func newSearchEngine(kind, searxngURL, braveKey string) (searchEngine, error) {
 	client := &http.Client{Timeout: searchTimeout}
 	if kind == "" {
@@ -59,8 +70,10 @@ func newSearchEngine(kind, searxngURL, braveKey string) (searchEngine, error) {
 			return nil, fmt.Errorf("search engine brave needs BRAVE_SEARCH_API_KEY")
 		}
 		return &braveEngine{key: braveKey, endpoint: braveEndpoint, client: client}, nil
+	case "duckduckgo":
+		return &duckduckgoEngine{endpoint: ddgEndpoint, client: client, minInterval: ddgMinInterval}, nil
 	}
-	return nil, fmt.Errorf("unknown search engine %q (want searxng or brave)", kind)
+	return nil, fmt.Errorf("unknown search engine %q (want searxng, brave or duckduckgo)", kind)
 }
 
 type searxngEngine struct {
@@ -79,7 +92,10 @@ func (e *searxngEngine) search(ctx context.Context, query string, limit int) ([]
 			PublishedDate       string `json:"publishedDate"`
 		} `json:"results"`
 	}
-	if err := getJSON(ctx, e.client, u.String(), nil, &body); err != nil {
+	// The proxy is the instance's only client: saying so keeps SearXNG's bot
+	// detection from logging a missing-client-address error on every query.
+	header := http.Header{"X-Real-Ip": {"127.0.0.1"}}
+	if err := getJSON(ctx, e.client, u.String(), header, &body); err != nil {
 		if strings.Contains(err.Error(), "status 403") {
 			err = fmt.Errorf("%w (enable the JSON format: `search: formats: [html, json]` in SearXNG's settings.yml)", err)
 		}
@@ -125,6 +141,107 @@ func (e *braveEngine) search(ctx context.Context, query string, limit int) ([]se
 		out = append(out, searchResult{Title: r.Title, URL: r.URL, Snippet: r.Description, Published: r.Age})
 	}
 	return out, nil
+}
+
+// errDDGRateLimited reports DuckDuckGo's bot defences (HTTP 202 or its challenge page).
+var errDDGRateLimited = errors.New("DuckDuckGo is rate-limiting this machine (HTTP 202 or challenge page): wait a minute, or use web_fetch on a known URL")
+
+// duckduckgoEngine reads DuckDuckGo's keyless HTML results page
+// (html.duckduckgo.com), first page only. DuckDuckGo publishes no API for web
+// results and meets bursts with HTTP 202 or a challenge page, so searches are
+// spaced by minInterval, even across concurrent requests, and those answers
+// become errDDGRateLimited. Ads are skipped.
+type duckduckgoEngine struct {
+	endpoint    string
+	client      *http.Client
+	minInterval time.Duration
+
+	mu   sync.Mutex
+	next time.Time // earliest start of the next search
+}
+
+func (e *duckduckgoEngine) name() string { return "duckduckgo" }
+
+// wait reserves the next search slot and sleeps until it, or until ctx ends.
+func (e *duckduckgoEngine) wait(ctx context.Context) error {
+	e.mu.Lock()
+	at := time.Now()
+	if e.next.After(at) {
+		at = e.next
+	}
+	e.next = at.Add(e.minInterval)
+	e.mu.Unlock()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(time.Until(at)):
+		return nil
+	}
+}
+
+func (e *duckduckgoEngine) search(ctx context.Context, query string, limit int) ([]searchResult, error) {
+	if err := e.wait(ctx); err != nil {
+		return nil, err
+	}
+	form := url.Values{"q": {query}, "b": {""}, "kl": {"wt-wt"}}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, e.endpoint, strings.NewReader(form.Encode()))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Referer", "https://html.duckduckgo.com/")
+	req.Header.Set("User-Agent", chromeUserAgent)
+	req.Header.Set("Accept-Language", browserHeaders["Accept-Language"])
+	resp, err := e.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	switch resp.StatusCode {
+	case http.StatusOK:
+	case http.StatusAccepted:
+		return nil, errDDGRateLimited
+	default:
+		return nil, fmt.Errorf("search engine answered status %d", resp.StatusCode)
+	}
+	doc, err := goquery.NewDocumentFromReader(io.LimitReader(resp.Body, 2<<20))
+	if err != nil {
+		return nil, err
+	}
+	if doc.Find("form#challenge-form").Length() > 0 {
+		return nil, errDDGRateLimited
+	}
+	out := make([]searchResult, 0, limit)
+	doc.Find("#links > div.web-result").Each(func(_ int, s *goquery.Selection) {
+		if len(out) == limit || s.HasClass("result--ad") {
+			return
+		}
+		a := s.Find("h2 a").First()
+		href, _ := a.Attr("href")
+		href, title := resultURL(href), strings.TrimSpace(a.Text())
+		if href == "" || title == "" {
+			return
+		}
+		out = append(out, searchResult{Title: title, URL: href, Snippet: strings.TrimSpace(s.Find(".result__snippet").First().Text())})
+	})
+	return out, nil
+}
+
+// resultURL returns where a result link points. DuckDuckGo writes most links
+// directly, and some as a protocol-relative hop through its own site,
+// //duckduckgo.com/l/?uddg=<destination>, whose destination is returned.
+func resultURL(href string) string {
+	link, err := url.Parse(strings.TrimSpace(href))
+	if err != nil {
+		return ""
+	}
+	if dest := link.Query().Get("uddg"); dest != "" && link.Path == "/l/" && strings.HasSuffix(link.Hostname(), "duckduckgo.com") {
+		return dest
+	}
+	if link.Scheme == "" && link.Host != "" {
+		link.Scheme = "https"
+	}
+	return link.String()
 }
 
 // getJSON GETs rawURL and decodes its JSON body into v.

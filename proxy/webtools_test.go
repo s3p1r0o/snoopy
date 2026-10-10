@@ -50,7 +50,7 @@ func testWebTools(t *testing.T, names ...string) (*webTools, *httptest.Server) {
 	for _, n := range names {
 		owned[n] = true
 	}
-	return &webTools{owned: owned, fetcher: newFetcher("test", true)}, srv
+	return &webTools{owned: owned, fetcher: newFetcher(true)}, srv
 }
 
 func TestWebToolsRunServerCallsThenAnswer(t *testing.T) {

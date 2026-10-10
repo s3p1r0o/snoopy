@@ -40,7 +40,7 @@ var webToolDefs = map[string]Tool{
 	},
 	toolWebCrawl: {
 		Name:        toolWebCrawl,
-		Description: "Crawl a website from one URL: follows links on the same host (breadth first, honouring robots.txt) and returns each page's main content as Markdown. Use for documentation sites or sections; use web_fetch for a single page.",
+		Description: "Crawl a website from one URL: follows links on the same host (breadth first) and returns each page's main content as Markdown. Use for documentation sites or sections; use web_fetch for a single page.",
 		InputSchema: `{"type":"object","properties":{"url":{"type":"string","description":"Absolute http(s) start URL"},"max_pages":{"type":"integer","minimum":1,"maximum":20,"description":"Pages to fetch (default 10)"},"max_depth":{"type":"integer","minimum":0,"maximum":3,"description":"Link depth from the start page (default 2)"},"path_prefix":{"type":"string","description":"Only follow links whose path starts with this prefix, e.g. /docs/"}},"required":["url"]}`,
 	},
 }
@@ -277,8 +277,7 @@ func newWebTools(spec, engineKind, searxngURL, braveKey string, log io.Writer) (
 	if engine == nil && explicit {
 		return nil, fmt.Errorf("web tool search needs a search engine: set --searxng-url (RILL_SEARXNG_URL) or BRAVE_SEARCH_API_KEY")
 	}
-	userAgent := "snoopy-proxy/" + version + " (+https://github.com/s3p1r0o/snoopy)"
-	return &webTools{owned: owned, engine: engine, fetcher: newFetcher(userAgent, false), log: log}, nil
+	return &webTools{owned: owned, engine: engine, fetcher: newFetcher(false), log: log}, nil
 }
 
 // toolNames lists tool names, for messages.

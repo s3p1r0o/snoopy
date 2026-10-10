@@ -29,6 +29,34 @@ EXPOSE 8081
 USER nonroot:nonroot
 ENTRYPOINT ["/proxy"]
 
+# Bundled web_search engine: SearXNG (AGPL-3.0-or-later), run UNMODIFIED as
+# its own process by the launcher, on 127.0.0.1 inside the container (see
+# lib/searxng.js). Pinned to one upstream commit, fetched by git (the commit
+# hash pins the content); built on the same Debian base as the runtime, so its
+# virtualenv's python3 is the one the runtime installs. Its source and licence
+# ship in /opt/searxng (searx/, LICENSE); upstream: github.com/searxng/searxng.
+FROM node:24-slim@sha256:d6aa754f16b3197301076f047b5def2f02ea1dbbc2ca920407d46d7ec7f87b20 AS searxng
+ARG SEARXNG_COMMIT=3cd69d30e2a78dfc817be9e349e7c2e4317c92e3
+ARG SEARXNG_VERSION=2026.9.23+3cd69d30e
+RUN apt-get update && apt-get install -y --no-install-recommends python3 python3-venv \
+    && rm -rf /var/lib/apt/lists/*
+ADD --keep-git-dir=false https://github.com/searxng/searxng.git#${SEARXNG_COMMIT} /src/searxng
+RUN set -eux; \
+    mkdir -p /opt/searxng; \
+    cp -r /src/searxng/searx /src/searxng/LICENSE /src/searxng/requirements.txt /src/searxng/requirements-server.txt /opt/searxng/; \
+    python3 -m venv /opt/searxng/.venv; \
+    /opt/searxng/.venv/bin/pip install --no-cache-dir --disable-pip-version-check \
+        -r /opt/searxng/requirements.txt -r /opt/searxng/requirements-server.txt; \
+    printf '%s\n' \
+        '# SPDX-License-Identifier: AGPL-3.0-or-later' \
+        '# written by the snoopy Dockerfile (no .git in the image), as searx/version.py freeze would' \
+        "VERSION_STRING = \"${SEARXNG_VERSION}\"" \
+        "VERSION_TAG = \"${SEARXNG_VERSION}\"" \
+        "DOCKER_TAG = \"${SEARXNG_VERSION}\"" \
+        'GIT_URL = "https://github.com/searxng/searxng"' \
+        'GIT_BRANCH = "master"' \
+        > /opt/searxng/searx/version_frozen.py
+
 # Node official build (glibc: dsh native packages only ship for linux/darwin).
 # npm deps install WITHOUT scripts: the proxy binary comes from build-go, not
 # from a postinstall download — the image build stays offline and hermetic.
@@ -53,9 +81,14 @@ RUN mkdir -p /data && chown node:node /data
 # the OpenAI endpoint widens to all interfaces for bridge deployments.
 FROM deps-base AS harness
 ARG VERSION=unknown
+# python3 runs the bundled SearXNG (same Debian release as the searxng stage).
+RUN apt-get update && apt-get install -y --no-install-recommends python3 \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=searxng /opt/searxng /opt/searxng
 ENV DSH_HOME=/data/dsh \
     SNOOPY_PROXY_ADDRESS=0.0.0.0 \
-    SNOOPY_PORT=8081
+    SNOOPY_PORT=8081 \
+    SNOOPY_SEARXNG_DIR=/opt/searxng
 VOLUME /data
 EXPOSE 8081 3080
 USER node

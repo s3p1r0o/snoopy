@@ -1,9 +1,10 @@
 package main
 
-// webcrawl.go backs the web_crawl tool: a polite breadth-first crawl from one
-// URL over the same host (optionally under one path prefix), honouring the
-// site's robots.txt, with page, depth, size and time limits. Every request
-// goes through the fetcher, so its address checks and caps apply.
+// webcrawl.go backs the web_crawl tool: a breadth-first crawl from one URL
+// over the same host (optionally under one path prefix), with page, depth,
+// size and time limits and a delay between requests. robots.txt is not
+// consulted: the crawl runs on a user's behalf, like their browser would.
+// Every request goes through the fetcher, so its address checks and caps apply.
 
 import (
 	"context"
@@ -13,7 +14,6 @@ import (
 	"time"
 
 	"github.com/PuerkitoBio/goquery"
-	"github.com/temoto/robotstxt"
 )
 
 const (
@@ -24,7 +24,6 @@ const (
 	maxCrawlPageChars   = 4_000
 	maxCrawlOutputChars = 60_000
 	crawlTimeout        = 90 * time.Second
-	robotsAgent         = "snoopy-proxy"
 )
 
 // crawlDelay spaces requests to the crawled site; tests set it to zero.
@@ -44,7 +43,6 @@ func (f *fetcher) crawl(ctx context.Context, start string, opt crawlOptions) (st
 	root.Fragment = ""
 	ctx, cancel := context.WithTimeout(ctx, crawlTimeout)
 	defer cancel()
-	robots := f.robots(ctx, root)
 
 	type item struct {
 		u     *url.URL
@@ -54,14 +52,10 @@ func (f *fetcher) crawl(ctx context.Context, start string, opt crawlOptions) (st
 	seen := map[string]bool{root.String(): true}
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "Crawl of %s (same host, depth <= %d, at most %d pages)\n", root, opt.maxDepth, opt.maxPages)
-	pages, blocked := 0, 0
+	pages := 0
 	for len(queue) > 0 && pages < opt.maxPages {
 		it := queue[0]
 		queue = queue[1:]
-		if !robots.TestAgent(it.u.RequestURI(), robotsAgent) {
-			blocked++
-			continue
-		}
 		if pages > 0 {
 			select {
 			case <-ctx.Done():
@@ -84,10 +78,8 @@ func (f *fetcher) crawl(ctx context.Context, start string, opt crawlOptions) (st
 			continue
 		}
 		if pages == 1 && p.URL.Host != root.Host {
-			// The start URL redirected to another host (apex -> www): crawl
-			// that host, under its own robots.txt.
+			// The start URL redirected to another host (apex -> www): crawl that host.
 			root = &url.URL{Scheme: p.URL.Scheme, Host: p.URL.Host}
-			robots = f.robots(ctx, root)
 			seen[p.URL.String()] = true
 		}
 		title, md, err := pageMarkdown(p, maxCrawlPageChars)
@@ -112,29 +104,8 @@ func (f *fetcher) crawl(ctx context.Context, start string, opt crawlOptions) (st
 			}
 		}
 	}
-	fmt.Fprintf(&sb, "\n(%d pages fetched", pages)
-	if blocked > 0 {
-		fmt.Fprintf(&sb, ", %d skipped by robots.txt", blocked)
-	}
-	sb.WriteString(")")
+	fmt.Fprintf(&sb, "\n(%d pages fetched)", pages)
 	return sb.String(), nil
-}
-
-// robots returns the site's robots.txt rules. Following RFC 9309, a missing
-// file allows everything and an unreachable one (server or network error)
-// disallows everything; that verdict lives on RobotsData, so callers must use
-// RobotsData.TestAgent (a Group alone does not carry it).
-func (f *fetcher) robots(ctx context.Context, root *url.URL) *robotstxt.RobotsData {
-	robotsURL := root.Scheme + "://" + root.Host + "/robots.txt"
-	status, body := 500, []byte(nil)
-	if p, err := f.get(ctx, robotsURL); err == nil {
-		status, body = p.Status, p.Body
-	}
-	data, err := robotstxt.FromStatusAndBytes(status, body)
-	if err != nil {
-		data, _ = robotstxt.FromStatusAndBytes(500, nil)
-	}
-	return data
 }
 
 // pageLinks returns the absolute http(s) links of an HTML page, without fragments.
