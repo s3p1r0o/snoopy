@@ -3,7 +3,7 @@
 All notable changes to this project are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/); the project does not yet follow SemVer (single-binary tool, version stamped at build time).
 
-## [Unreleased]
+## [0.2.0] - 2026-10-10
 
 - **Default MCP knowledge base.** The launchers hand the proxy a default `--mcp-config` (`~/.config/snoopy/mcp.json`, written once, never overwriting user edits): Wikipedia over Streamable HTTP on an open [wikipedia-mcp-server](https://github.com/cyanheads/wikipedia-mcp-server) instance, offered to the agents as `wiki__wikipedia_*` server-side tools. `SNOOPY_MCP=0` opts out; `RILL_MCP_CONFIG` with your own file takes precedence.
 
