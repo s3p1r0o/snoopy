@@ -75,7 +75,7 @@ The proxy itself gives agents three web tools, so no dsh plugin is needed: `web_
 }
 ```
 
-stdio servers (`command`/`args`/`env`) are processes the proxy starts and keeps; http servers are Streamable HTTP endpoints authenticated with static headers. Every tool an enabled server announces is offered to the model as `server__tool`, next to the web tools in the same server-side tool loop; `enabled` (default true) turns a server off. A server that fails to start or to initialize within 10 s is logged and skipped, the proxy runs on; a server that dies mid-session makes its calls fail as tool errors the model can see. Results are treated as untrusted data, and the tool call arguments and results may appear in the `TOOL` access log (the config file's secrets never do).
+stdio servers (`command`/`args`/`env`) are processes the proxy starts and keeps; http servers are Streamable HTTP endpoints authenticated with static headers. Every tool an enabled server announces is offered to the model as `server__tool`, next to the web tools in the same server-side tool loop; `enabled` (default true) turns a server off. A server that fails to start or to initialize within 10 s is logged and skipped, the proxy runs on; a server that dies mid-session makes its calls fail as tool errors the model can see. Results are treated as untrusted data (a stdio server's stderr is logged with its name); the config file's secrets are never logged, and the `TOOL` access log records the tool, its target and the duration only. Results are capped like fetched pages.
 
 ### Upgrading
 

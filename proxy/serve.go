@@ -103,6 +103,8 @@ func runServe(args []string, stdout, stderr io.Writer) {
 	if err != nil {
 		fatalf(stderr, "%v", err)
 	}
+	// Stops the stdio servers with the proxy (<= 5s terminate grace each).
+	defer mcpMgr.close()
 	web, err := newWebTools(*webToolsSpec, *searchEngine, *searxngURL, os.Getenv("BRAVE_SEARCH_API_KEY"), stdout, mcpMgr)
 	if err != nil {
 		fatalf(stderr, "%v", err)

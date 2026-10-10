@@ -7,6 +7,7 @@ package main
 // docs/superpowers/specs/2026-10-10-proxy-mcp-client-design.md.
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -18,6 +19,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -134,6 +136,20 @@ type mcpManager struct {
 	log      io.Writer
 }
 
+// mutexWriter makes one log stream safe for the writers that touch it
+// concurrently: a stdio server's stderr scanner runs while the tool loop and
+// the startup path write their own lines.
+type mutexWriter struct {
+	mu   sync.Mutex
+	next io.Writer
+}
+
+func (w *mutexWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.next.Write(p)
+}
+
 // startMCPServers connects to every enabled server; a server that fails to
 // start, initialize or list its tools logs one line and is skipped. nil
 // (with nil error) when MCP is off.
@@ -142,9 +158,9 @@ func startMCPServers(configPath string, log io.Writer) (*mcpManager, error) {
 	if err != nil || len(servers) == 0 {
 		return nil, err
 	}
-	m := &mcpManager{log: log}
+	m := &mcpManager{log: &mutexWriter{next: log}}
 	for _, es := range servers {
-		session := connectMCPSession(es.spec, log)
+		session := connectMCPSession(es.spec, m.log)
 		if session == nil {
 			continue
 		}
@@ -167,7 +183,7 @@ func connectMCPSession(spec mcpServerSpec, log io.Writer) *mcp.ClientSession {
 			Transport: &headerRoundTripper{headers: spec.headers, next: safeTransport()},
 		}}
 	default:
-		transport = &mcp.CommandTransport{Command: newStdioCmd(&spec)}
+		transport = &mcp.CommandTransport{Command: newStdioCmd(&spec, log)}
 	}
 	client := mcp.NewClient(&mcp.Implementation{Name: "snoopy-proxy", Version: "v0.1.0"}, nil)
 	session, err := client.Connect(ctx, transport, nil)
@@ -202,11 +218,27 @@ func safeTransport() http.RoundTripper {
 // inherited environment (servers need PATH as much as anything) with the
 // config's env added on top, winning conflicts, so an operator override of
 // e.g. NO_COLOR cannot be silently shadowed by the proxy's own environment.
-func newStdioCmd(spec *mcpServerSpec) *exec.Cmd {
+func newStdioCmd(spec *mcpServerSpec, log io.Writer) *exec.Cmd {
 	cmd := exec.Command(spec.command, spec.args...)
 	cmd.Env = baseEnvWith(spec.env)
-	cmd.Stderr = io.Discard // server chatter never interleaves with proxy logs
+	// Pipe the server's stderr into the log, one line at a time, prefixed:
+	// a server whose bootstrap fails prints there, and the operator needs it.
+	if pipe, err := cmd.StderrPipe(); err == nil {
+		go scanStderr(pipe, log, spec.name)
+	}
 	return cmd
+}
+
+// scanStderr logs one prefixed line per stderr line of a stdio server.
+func scanStderr(pipe io.ReadCloser, log io.Writer, name string) {
+	scanner := bufio.NewScanner(pipe)
+	scanner.Buffer(make([]byte, 0, 64*1024), 64*1024)
+	for scanner.Scan() {
+		if log != nil {
+			fmt.Fprintf(log, "MCP stderr [%s]: %s\n", name, scanner.Text())
+		}
+	}
+	pipe.Close()
 }
 
 // baseEnvWith returns os.Environ, with each of overrides' keys replaced
@@ -231,18 +263,33 @@ func baseEnvWith(overrides map[string]string) []string {
 }
 
 // listTools caches one def per tool the server announces, named server__tool.
+// Paging is followed to the last page: a server may cap each tools/list
+// response (the SDK's own server caps at 1000), and tools past page one
+// would silently vanish from what the model sees.
 func (m *mcpManager) listTools(spec mcpServerSpec, session *mcp.ClientSession) {
 	ctx, cancel := context.WithTimeout(context.Background(), initTimeout)
 	defer cancel()
-	result, err := session.ListTools(ctx, nil)
-	if err != nil {
-		fmt.Fprintf(m.log, "MCP server %s is connected but listed no tools: %v\n", spec.name, err)
-		return
-	}
 	if m.tools == nil {
 		m.tools = map[string]*mcpTool{}
 	}
-	for _, tool := range result.Tools {
+	params := &mcp.ListToolsParams{}
+	for {
+		result, err := session.ListTools(ctx, params)
+		if err != nil {
+			fmt.Fprintf(m.log, "MCP server %s is connected but listed no tools: %v\n", spec.name, err)
+			return
+		}
+		m.addToolDefs(spec, session, result.Tools)
+		if result.NextCursor == "" {
+			return
+		}
+		params.Cursor = result.NextCursor
+	}
+}
+
+// addToolDefs caches the defs of one tools/list page.
+func (m *mcpManager) addToolDefs(spec mcpServerSpec, session *mcp.ClientSession, tools []*mcp.Tool) {
+	for _, tool := range tools {
 		name := composeMCPToolName(spec.name, tool.Name)
 		schema := `{"type":"object"}`
 		if b, err := json.Marshal(tool.InputSchema); err == nil && len(b) > 0 {
@@ -325,7 +372,18 @@ func renderMCPResult(name string, result *mcp.CallToolResult) string {
 			sb.WriteString("\n")
 		}
 	}
-	return sb.String()
+	return capMCPResult(sb.String())
+}
+
+// capMCPResult bounds a rendered result like a fetched page is bounded:
+// unbounded tool output would enter the conversation and can alone push a
+// later request over the token budget, which the model could not recover
+// from, since its own tool result caused it.
+func capMCPResult(s string) string {
+	if len(s) <= maxPageMarkdownChars {
+		return s
+	}
+	return s[:maxPageMarkdownChars] + fmt.Sprintf("\n\n(result longer than %d characters; truncated)\n", maxPageMarkdownChars)
 }
 
 // contentKind names the content type, for the not-rendered note.

@@ -3,9 +3,11 @@ package main
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -242,7 +244,7 @@ func TestMCPTruncationCollisionIgnored(t *testing.T) {
 		func(ctx context.Context, req *mcp.CallToolRequest, in struct{}) (*mcp.CallToolResult, any, error) {
 			return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "second"}}}, nil, nil
 		})
-	log := &bytes.Buffer{}
+	log := &lockedBuffer{}
 	m := &mcpManager{log: log}
 	session := connectTestSession(t, s)
 	m.sessions = append(m.sessions, session)
@@ -272,7 +274,7 @@ func TestWebToolsOfferMCPTools(t *testing.T) {
 	}
 	// The model's call to an MCP tool runs through the loop's run/dispatch,
 	// with the TOOL log line the other server-side tools get.
-	log := &bytes.Buffer{}
+	log := &lockedBuffer{}
 	w.log = log
 	out := w.run(context.Background(), &ToolCall{ID: "t1", Name: "test__echo", Input: `{"text":"hi"}`})
 	if !strings.Contains(out, "untrusted") || !strings.Contains(out, "echoed: hi") {
@@ -296,7 +298,7 @@ func TestWebToolsMCPUnknownTool(t *testing.T) {
 func TestStdioCommandBuildsEnvironment(t *testing.T) {
 	t.Setenv("FOO", "inherited")
 	spec := mcpServerSpec{name: "local", command: "sh", args: []string{"-c", "true"}, env: map[string]string{"FOO": "bar"}}
-	cmd := newStdioCmd(&spec)
+	cmd := newStdioCmd(&spec, nil)
 	if len(cmd.Args) != 3 || cmd.Args[0] != "sh" || cmd.Args[1] != "-c" {
 		t.Fatalf("args = %v", cmd.Args)
 	}
@@ -323,7 +325,7 @@ func TestStdioServerInitTimeout(t *testing.T) {
 	savedInit := initTimeout
 	initTimeout = 300 * time.Millisecond
 	defer func() { initTimeout = savedInit }()
-	var log bytes.Buffer
+	var log lockedBuffer
 	m, err := startMCPServers(path, &log)
 	if err != nil || m == nil {
 		t.Fatalf("start = (%v, %v)", m, err)
@@ -336,4 +338,156 @@ func TestStdioServerInitTimeout(t *testing.T) {
 	}
 	// The (timed-out) helper process must not outlive the test.
 	m.close()
+}
+
+// --- review fixes (RED) ---
+
+func TestMCPListToolsFollowsPagination(t *testing.T) {
+	// A server that pages its tools (PageSize 4, 10 tools): every page must
+	// be followed, or tools silently vanish from what the model sees.
+	opts := &mcp.ServerOptions{PageSize: 4}
+	s := mcp.NewServer(&mcp.Implementation{Name: "pag", Version: "1.0.0"}, opts)
+	for i := 0; i < 10; i++ {
+		name := fmt.Sprintf("tool_%02d", i)
+		mcp.AddTool(s, &mcp.Tool{Name: name},
+			func(ctx context.Context, req *mcp.CallToolRequest, in struct{}) (*mcp.CallToolResult, any, error) {
+				return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "ok"}}}, nil, nil
+			})
+	}
+	m := &mcpManager{log: &bytes.Buffer{}}
+	session := connectTestSession(t, s)
+	m.sessions = append(m.sessions, session)
+	m.listTools(mcpServerSpec{name: "p"}, session)
+	if len(m.tools) != 10 {
+		t.Fatalf("tools = %d, want all 10 pages followed", len(m.tools))
+	}
+}
+
+func TestMCPCapsResultSize(t *testing.T) {
+	// A chatty tool must not flood the loop: the rendered result is capped,
+	// like a fetched page, with the cut flagged.
+	s := mcp.NewServer(&mcp.Implementation{Name: "big", Version: "1.0.0"}, nil)
+	mcp.AddTool(s, &mcp.Tool{Name: "huge", Description: "returns far more than the cap"},
+		func(ctx context.Context, req *mcp.CallToolRequest, in struct{}) (*mcp.CallToolResult, any, error) {
+			return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: strings.Repeat("x", 3*maxPageMarkdownChars)}}}, nil, nil
+		})
+	m := &mcpManager{log: &bytes.Buffer{}}
+	session := connectTestSession(t, s)
+	m.sessions = append(m.sessions, session)
+	m.listTools(mcpServerSpec{name: "b"}, session)
+	out, err := m.run(context.Background(), "b__huge", "{}")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out) > len(untrustedNote)+maxPageMarkdownChars+200 {
+		t.Fatalf("result = %d chars, want a cap near %d", len(out), maxPageMarkdownChars)
+	}
+	if !strings.Contains(out, "truncated") {
+		t.Fatalf("the cap must flag the cut: tail = %q", out[len(out)-120:])
+	}
+}
+
+func TestMCPDeadSessionCallFails(t *testing.T) {
+	// A server that dies after startup: its calls fail as tool results the
+	// model can see, and the tool loop survives.
+	m := newTestManager(t, mcpTestServer())
+	m.sessions[0].Close()
+	out, err := m.run(context.Background(), "test__echo", `{"text":"hi"}`)
+	if err != nil {
+		t.Fatalf("a dead server's call error must become a result, got %v", err)
+	}
+	if !strings.Contains(out, "failed") {
+		t.Fatalf("result = %q", out)
+	}
+}
+
+// TestMain doubles this test binary as a real stdio MCP helper server for
+// the CommandTransport tests (env-gated; without the env the suite runs).
+func TestMain(m *testing.M) {
+	if os.Getenv("SNOOPY_MCP_STDIO_HELPER") == "echo" {
+		os.Exit(runMCPEchoHelper())
+	}
+	os.Exit(m.Run())
+}
+
+// runMCPEchoHelper serves the echo test server over real stdio, so the
+// manager tests exercise a real process, not only in-memory transports. Its
+// stderr line lets the stderr-piping test assert on it; EOF on stdin ends it.
+func runMCPEchoHelper() int {
+	fmt.Fprintln(os.Stderr, "helper stderr line for tests")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { time.Sleep(3 * time.Minute); cancel() }() // never hang the helper
+	if err := mcpTestServer().Run(ctx, &mcp.StdioTransport{}); err != nil {
+		fmt.Fprintln(os.Stderr, "helper server error:", err)
+		return 1
+	}
+	return 0
+}
+
+func TestMCPStdioEndToEnd(t *testing.T) {
+	// A real process, started by the manager over CommandTransport: the whole
+	// path from a config file to a model-facing tool call.
+	path := writeMCPConfig(t, fmt.Sprintf(`{"mcpServers":{"sh":{"command":%q,"env":{"SNOOPY_MCP_STDIO_HELPER":"echo"}}}}`, os.Args[0]))
+	var log lockedBuffer
+	m, err := startMCPServers(path, &log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.close()
+	if tool := m.tools["sh__echo"]; tool == nil {
+		t.Fatalf("tools = %v", toolNames(m.defs()))
+	}
+	out, err := m.run(context.Background(), "sh__echo", `{"text":"hello"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "echoed: hello") {
+		t.Fatalf("result = %q", out)
+	}
+	// The helper's stderr reaches the log, prefixed with the server name.
+	sawStderr := false
+	for i := 0; i < 100 && !sawStderr; i++ {
+		sawStderr = strings.Contains(log.String(), "MCP stderr [sh]")
+		time.Sleep(20 * time.Millisecond)
+	}
+	if !sawStderr {
+		t.Fatalf("log = %q", log.String())
+	}
+}
+
+func TestMCPStdioSessionsCloseWithTheManager(t *testing.T) {
+	// After manager close, calls fail as results: nothing wedges.
+	path := writeMCPConfig(t, fmt.Sprintf(`{"mcpServers":{"sh":{"command":%q,"env":{"SNOOPY_MCP_STDIO_HELPER":"echo"}}}}`, os.Args[0]))
+	m, err := startMCPServers(path, &bytes.Buffer{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.close()
+	out, err := m.run(context.Background(), "sh__echo", `{"text":"hello"}`)
+	if err != nil {
+		t.Fatalf("closed-session call error must be a result, got %v", err)
+	}
+	if !strings.Contains(out, "failed") {
+		t.Fatalf("result = %q", out)
+	}
+}
+
+// lockedBuffer is a bytes.Buffer the stderr scanner and the test can fight
+// over without racing.
+type lockedBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
 }
