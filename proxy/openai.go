@@ -220,44 +220,73 @@ func choiceMessage(msg *Message) (*choiceMsg, string) {
 	return out, finish
 }
 
-// writeSSE streams the upstream response as OpenAI-style Server-Sent Events.
-// The upstream contract is unary, so the response is sent as a single full-content chunk; token-by-token streaming is not possible.
-func writeSSE(w http.ResponseWriter, model string, resp *CompleteResponse) {
-	msg, finish := choiceMessage(resp.Message)
-	id := newCompletionID()
+// sseWriter streams one completion as OpenAI-style Server-Sent Events. The
+// upstream contract is unary, so the content is sent as one full chunk once
+// the completion is known; token-by-token streaming is not possible. While a
+// long completion runs (server-side web tools), keepAlive sends SSE comments.
+type sseWriter struct {
+	w         http.ResponseWriter
+	id, model string
+}
+
+// startSSE writes the event-stream headers and the role chunk.
+func startSSE(w http.ResponseWriter, model string) *sseWriter {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
-	flush := func() {
-		if f, ok := w.(http.Flusher); ok {
-			f.Flush()
-		}
+	s := &sseWriter{w: w, id: newCompletionID(), model: model}
+	s.chunk(map[string]any{"role": "assistant"}, "")
+	return s
+}
+
+func (s *sseWriter) flush() {
+	if f, ok := s.w.(http.Flusher); ok {
+		f.Flush()
 	}
-	chunk := func(delta map[string]any, reason string) {
-		b, _ := json.Marshal(map[string]any{
-			"id":      id,
-			"object":  "chat.completion.chunk",
-			"created": time.Now().Unix(),
-			"model":   model,
-			"choices": []map[string]any{{
-				"index":         0,
-				"delta":         delta,
-				"finish_reason": reason,
-			}},
-		})
-		fmt.Fprintf(w, "data: %s\n\n", b)
-		flush()
-	}
-	chunk(map[string]any{"role": "assistant"}, "")
+}
+
+func (s *sseWriter) chunk(delta map[string]any, reason string) {
+	b, _ := json.Marshal(map[string]any{
+		"id":      s.id,
+		"object":  "chat.completion.chunk",
+		"created": time.Now().Unix(),
+		"model":   s.model,
+		"choices": []map[string]any{{
+			"index":         0,
+			"delta":         delta,
+			"finish_reason": reason,
+		}},
+	})
+	fmt.Fprintf(s.w, "data: %s\n\n", b)
+	s.flush()
+}
+
+// keepAlive sends an SSE comment, which clients ignore, so idle-timeouts do not fire.
+func (s *sseWriter) keepAlive() {
+	fmt.Fprint(s.w, ": keep-alive\n\n")
+	s.flush()
+}
+
+// finish streams the completion's content and tool calls, the finish chunk and [DONE].
+func (s *sseWriter) finish(resp *CompleteResponse) {
+	msg, finish := choiceMessage(resp.Message)
 	if msg.Content != "" {
-		chunk(map[string]any{"content": msg.Content}, "")
+		s.chunk(map[string]any{"content": msg.Content}, "")
 	}
 	for i := range msg.ToolCalls {
-		chunk(map[string]any{"tool_calls": []responseToolCall{msg.ToolCalls[i]}}, "")
+		s.chunk(map[string]any{"tool_calls": []responseToolCall{msg.ToolCalls[i]}}, "")
 	}
-	chunk(map[string]any{}, finish)
-	fmt.Fprint(w, "data: [DONE]\n\n")
-	flush()
+	s.chunk(map[string]any{}, finish)
+	fmt.Fprint(s.w, "data: [DONE]\n\n")
+	s.flush()
+}
+
+// fail ends a stream whose completion failed after the headers were sent.
+func (s *sseWriter) fail(message string) {
+	b, _ := json.Marshal(map[string]any{"error": map[string]any{"message": message, "type": "api_error"}})
+	fmt.Fprintf(s.w, "data: %s\n\n", b)
+	fmt.Fprint(s.w, "data: [DONE]\n\n")
+	s.flush()
 }
 
 // writeJSON writes a JSON response, including the OpenAI error envelope if the status is an error.

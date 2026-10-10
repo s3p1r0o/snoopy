@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -30,6 +31,7 @@ type serveConfig struct {
 	systemPrompt        string
 	maxInputTokens      int
 	maxRequestBodyBytes int64
+	web                 *webTools // nil: no server-side web tools
 }
 
 // maxRequestBodyBytes is the default local cap on request bodies. It matches the
@@ -75,6 +77,9 @@ func runServe(args []string, stdout, stderr io.Writer) {
 	token := fs.String("token", os.Getenv("RILL_ADMIN_TOKEN"), "Bearer token for the admin API (optional: without one, calls are anonymous)")
 	systemPrompt := fs.String("system-prompt", envDefault("RILL_SYSTEM_PROMPT", ""), "System message sent to the upstream before every conversation's own system messages (default: none sent)")
 	maxInputTokens := fs.Int("max-input-tokens", envDefaultInt("RILL_AI_SERVE_MAX_INPUT_TOKENS", maxUpstreamInputTokens), "Reject chat requests whose estimated input exceeds this many tokens (0 disables the limit)")
+	webToolsSpec := fs.String("web-tools", envDefault("RILL_WEB_TOOLS", ""), "Server-side web tools run for the model: all, none, or a comma list of search,fetch,crawl (default none)")
+	searchEngine := fs.String("search-engine", envDefault("RILL_SEARCH_ENGINE", ""), "web_search backend: searxng or brave (default: whichever is configured; Brave reads BRAVE_SEARCH_API_KEY)")
+	searxngURL := fs.String("searxng-url", envDefault("RILL_SEARXNG_URL", ""), "SearXNG base URL for web_search (its JSON format must be enabled)")
 	showVersion := fs.Bool("version", false, "Print the version and exit")
 	_ = fs.Parse(args)
 
@@ -91,6 +96,15 @@ func runServe(args []string, stdout, stderr io.Writer) {
 		token:          *token,
 		systemPrompt:   *systemPrompt,
 		maxInputTokens: *maxInputTokens,
+	}
+
+	web, err := newWebTools(*webToolsSpec, *searchEngine, *searxngURL, os.Getenv("BRAVE_SEARCH_API_KEY"), stdout)
+	if err != nil {
+		fatalf(stderr, "%v", err)
+	}
+	cfg.web = web
+	if names := toolNames(web.offered()); len(names) > 0 {
+		fmt.Fprintf(stdout, "Web tools run by the proxy: %s.\n", strings.Join(names, ", "))
 	}
 
 	if cfg.key == "" {
@@ -222,31 +236,109 @@ func newServeHandler(cfg serveConfig, comp completer) http.Handler {
 		if cfg.systemPrompt != "" {
 			messages = append([]Message{{Role: "system", Blocks: []Block{{Text: cfg.systemPrompt}}}}, messages...)
 		}
-		tools := rillTools(req.Tools)
-		// A limit of zero disables the check; the upstream then enforces its own configured limit.
-		estimate := estimateInputTokens(messages, tools)
-		if cfg.maxInputTokens > 0 && estimate > cfg.maxInputTokens {
-			openAIErrorCode(w, http.StatusBadRequest, "context_length_exceeded",
-				"estimated input tokens exceed the configured limit of %d tokens; your messages resulted in about %d tokens. Please reduce the length of the messages.",
-				cfg.maxInputTokens, estimate,
-			)
+		creq := &CompleteRequest{Messages: messages, Tools: rillTools(req.Tools)}
+		// Every upstream request is checked; a limit of zero disables the check,
+		// and the upstream then enforces its own configured limit.
+		checkBudget := func(messages []Message, tools []Tool) error {
+			if estimate := estimateInputTokens(messages, tools); cfg.maxInputTokens > 0 && estimate > cfg.maxInputTokens {
+				return contextLengthError{limit: cfg.maxInputTokens, estimate: estimate}
+			}
+			return nil
+		}
+		run := func(ctx context.Context) (*CompleteResponse, error) {
+			if cfg.web == nil {
+				if err := checkBudget(creq.Messages, creq.Tools); err != nil {
+					return nil, err
+				}
+				return comp.complete(ctx, creq)
+			}
+			return cfg.web.complete(ctx, comp, creq, checkBudget)
+		}
+		if req.Stream && cfg.web != nil {
+			streamCompletion(w, r.Context(), req.Model, run)
 			return
 		}
-		resp, err := comp.complete(r.Context(), &CompleteRequest{
-			Messages: messages,
-			Tools:    tools,
-		})
+		resp, err := run(r.Context())
 		if err != nil {
-			openAIError(w, http.StatusBadGateway, "upstream completion failed: %v", err)
+			writeCompletionError(w, err)
 			return
 		}
 		if req.Stream {
-			writeSSE(w, req.Model, resp)
-		} else {
-			writeJSON(w, http.StatusOK, completionFromUpstream(req.Model, resp))
+			// Without web tools the stream is written once the completion is
+			// known, as before --web-tools existed.
+			startSSE(w, req.Model).finish(resp)
+			return
 		}
+		writeJSON(w, http.StatusOK, completionFromUpstream(req.Model, resp))
 	})
 	return mux
+}
+
+// contextLengthError reports a request whose estimated input exceeds --max-input-tokens.
+type contextLengthError struct{ limit, estimate int }
+
+func (e contextLengthError) Error() string {
+	return fmt.Sprintf("estimated input tokens exceed the configured limit of %d tokens; your messages resulted in about %d tokens. Please reduce the length of the messages.", e.limit, e.estimate)
+}
+
+// writeCompletionError writes a failed completion in the OpenAI error envelope.
+func writeCompletionError(w http.ResponseWriter, err error) {
+	var cle contextLengthError
+	if errors.As(err, &cle) {
+		openAIErrorCode(w, http.StatusBadRequest, "context_length_exceeded", "%s", cle.Error())
+		return
+	}
+	openAIError(w, http.StatusBadGateway, "upstream completion failed: %v", err)
+}
+
+// sseKeepAlive is the longest a streamed request goes without a byte; tests shorten it.
+var sseKeepAlive = 15 * time.Second
+
+// streamCompletion answers a stream:true request when web tools are on. A
+// completion that settles within sseKeepAlive is answered as without them
+// (errors as HTTP statuses); a longer one (a server-side tool loop) gets its
+// stream opened early and SSE keep-alive comments until it settles, so
+// idle-timeouts do not cut it.
+func streamCompletion(w http.ResponseWriter, ctx context.Context, model string, run func(context.Context) (*CompleteResponse, error)) {
+	type result struct {
+		resp *CompleteResponse
+		err  error
+	}
+	done := make(chan result, 1)
+	go func() {
+		resp, err := run(ctx)
+		done <- result{resp, err}
+	}()
+	tick := time.NewTicker(sseKeepAlive)
+	defer tick.Stop()
+	var sse *sseWriter
+	for {
+		select {
+		case res := <-done:
+			switch {
+			case sse == nil && res.err != nil:
+				writeCompletionError(w, res.err)
+			case res.err != nil:
+				var cle contextLengthError
+				if errors.As(res.err, &cle) {
+					sse.fail(cle.Error())
+				} else {
+					sse.fail(fmt.Sprintf("upstream completion failed: %v", res.err))
+				}
+			default:
+				if sse == nil {
+					sse = startSSE(w, model)
+				}
+				sse.finish(res.resp)
+			}
+			return
+		case <-tick.C:
+			if sse == nil {
+				sse = startSSE(w, model)
+			}
+			sse.keepAlive()
+		}
+	}
 }
 
 // dialRill opens a gRPC connection to Rill's admin service, with an optional bearer token
