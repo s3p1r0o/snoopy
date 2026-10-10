@@ -508,3 +508,8 @@ test('the global AGENTS.md arbitrates between OpenSpec and the brainstorming cha
   assert.match(DEFAULT_AGENTS_MD, /Never run both workflows on the same change\./)
   assert.match(DEFAULT_AGENTS_MD, /explicit steps take precedence over these general rules/)
 })
+
+test('the global AGENTS.md keeps small changes out of the spec chain and project rules above skills', () => {
+  assert.match(DEFAULT_AGENTS_MD, /A small, clear change .* needs no spec workflow\./)
+  assert.match(DEFAULT_AGENTS_MD, /but not over the project's own instructions or the user's/)
+})

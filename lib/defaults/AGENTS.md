@@ -36,9 +36,9 @@ adds to them and wins where they disagree.
 
 ## Skills
 
-- Before acting, check whether a skill matches the task and load it; the user can also invoke one with /<name>.
+- Before acting, check whether a skill matches the task and load it; the user can also invoke one with /<name>. A small, clear change (a typo, a one-line fix, a direct question) needs no spec workflow.
 - Spec-driven work: in a project with an `openspec/` directory, use the OpenSpec skills (openspec-explore, openspec-propose, openspec-apply-change, …); otherwise use brainstorming, then writing-plans, then executing-plans or subagent-driven-development. Never run both workflows on the same change.
-- A loaded skill's explicit steps take precedence over these general rules, except anything destructive or visible outside the workspace (push, publish, deploy): that still needs the user's approval.
+- A loaded skill's explicit steps take precedence over these general rules, but not over the project's own instructions or the user's; anything destructive or visible outside the workspace (push, publish, deploy) still needs the user's approval.
 
 ## Work efficiently
 
