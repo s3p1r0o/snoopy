@@ -28,11 +28,25 @@ jobs:
           go-version-file: proxy/go.mod
           cache: false # no shared cache in a job holding a write token
 
+      # Pinned upstream build, checksum-verified: apt's just (1.21 on Ubuntu
+      # 24.04) cannot parse the justfile (variadic recipe parameters after
+      # defaulted ones).
       - name: Install just
-        run: sudo apt-get update && sudo apt-get install -y just
+        env:
+          JUST_VERSION: 1.58.0
+          JUST_SHA256: 4a5cc2f53e6f0f8c59092a6cc38291eb729d46a7dd95d3ae582008881b84931d
+        run: |
+          asset="just-${JUST_VERSION}-x86_64-unknown-linux-musl.tar.gz"
+          curl -fsSL -o "$RUNNER_TEMP/$asset" "https://github.com/casey/just/releases/download/${JUST_VERSION}/${asset}"
+          echo "${JUST_SHA256}  $RUNNER_TEMP/$asset" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/just"
+          tar -xzf "$RUNNER_TEMP/$asset" -C "$RUNNER_TEMP/just" just
+          echo "$RUNNER_TEMP/just" >> "$GITHUB_PATH"
 
       - name: Build release tarballs
-        run: just release
+        run: |
+          just --version
+          just release
 
       # The justfile strips the tag's `v` and any character outside
       # [A-Za-z0-9._-]; a tag that does not survive that unchanged fails here
