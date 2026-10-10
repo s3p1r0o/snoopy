@@ -8,7 +8,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, 
 import os from 'node:os'
 import path from 'node:path'
 import { openspecShim, resolveOpenspec, skillsEnv, skillsMode, writeOpenspecShim } from '../lib/skills.js'
-import { assembleSkills, bundledName, parseFrontmatter, renderNotice, rewriteSkillReferences } from './skills-sync.js'
+import { assembleSkills, bundledName, npxEnv, parseFrontmatter, renderNotice, rewriteSkillReferences } from './skills-sync.js'
 
 const PKG_ROOT = path.join(import.meta.dirname, '..')
 const BUNDLED = path.join(PKG_ROOT, 'skills', 'bundled')
@@ -204,4 +204,26 @@ test('the committed skills tree matches the catalog and ships with the package a
   const openspec = catalog.sources.find((s: { npm?: string }) => s.npm === '@fission-ai/openspec')
   assert.equal(manifest.dependencies['@fission-ai/openspec'], openspec.version)
   assert.match(readFileSync(path.join(PKG_ROOT, 'Dockerfile'), 'utf8'), /^COPY skills\/ skills\/$/m)
+})
+
+test('the shim keeps the OpenSpec CLI quiet: telemetry and update checks off unless the user set them', () => {
+  const dir = tmp()
+  try {
+    const probe = path.join(dir, 'probe.js')
+    writeFileSync(probe, 'console.log(`${process.env.OPENSPEC_TELEMETRY} ${process.env.OPENSPEC_NO_UPDATE_CHECK}`)\n')
+    writeOpenspecShim(path.join(dir, 'bin'), process.execPath, probe)
+    const shim = path.join(dir, 'bin', 'openspec')
+    const { OPENSPEC_TELEMETRY: _t, OPENSPEC_NO_UPDATE_CHECK: _u, ...base } = process.env
+    assert.equal(spawnSync(shim, [], { encoding: 'utf8', env: base }).stdout.trim(), '0 1')
+    assert.equal(spawnSync(shim, [], { encoding: 'utf8', env: { ...base, OPENSPEC_TELEMETRY: '1' } }).stdout.trim(), '1 1')
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('the sync runs OpenSpec with telemetry and update checks off', () => {
+  const env = npxEnv({ PATH: '/usr/bin' })
+  assert.equal(env.OPENSPEC_TELEMETRY, '0')
+  assert.equal(env.OPENSPEC_NO_UPDATE_CHECK, '1')
+  assert.equal(env.PATH, '/usr/bin')
 })

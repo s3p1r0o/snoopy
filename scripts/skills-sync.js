@@ -129,9 +129,19 @@ export function renderNotice(catalog) {
   ].join('\n')
 }
 
+/**
+ * The environment OpenSpec runs in during the sync: no usage telemetry, no
+ * npm update check (the CLI phones home by default).
+ * @param {NodeJS.ProcessEnv} base
+ * @returns {NodeJS.ProcessEnv}
+ */
+export function npxEnv(base) {
+  return { ...base, OPENSPEC_TELEMETRY: '0', OPENSPEC_NO_UPDATE_CHECK: '1' }
+}
+
 /** Runs a command, throwing with its stderr on failure. */
-function run(command, args, cwd) {
-  const result = spawnSync(command, args, { cwd, encoding: 'utf8' })
+function run(command, args, cwd, env = process.env) {
+  const result = spawnSync(command, args, { cwd, encoding: 'utf8', env })
   if (result.status !== 0) throw new Error(`${command} ${args.join(' ')} failed: ${result.stderr || result.error}`)
   return result.stdout
 }
@@ -148,7 +158,7 @@ function fetchSource(source, work) {
   const spec = `${source.npm}@${source.version}`
   mkdirSync(dir, { recursive: true })
   run('git', ['init', '--quiet'], dir)
-  run('npx', ['--yes', spec, ...source.generate], dir)
+  run('npx', ['--yes', spec, ...source.generate], dir, npxEnv(process.env))
   const tarball = run('npm', ['pack', '--quiet', spec, '--pack-destination', work], work).trim().split('\n').at(-1)
   const unpacked = path.join(work, `${source.id}-package`)
   mkdirSync(unpacked)
