@@ -48,6 +48,12 @@ Snoopy gives its agents two default texts, in `lib/defaults/`. The system prompt
 - **Approval.** Every `plugin_manager` action needs approval: in `web` the user approves in the UI; in `acp` the orchestrator receives `session/request_permission`; `headless` refuses unless `DSH_PERMISSION_MODE=danger-full-access`. Installed bundles run as host code, outside the workspace sandbox.
 - **Fleets.** Agents sharing a dsh home share its profiles: one agent's plugin change reaches every agent on that home. Give each agent its own `DSH_HOME` to keep them apart. Outside `web`, a change takes effect when the orchestrator restarts the agent.
 
+### Skills
+
+Snoopy bundles 23 skills for spec-driven development (listed with their sources and licences in [`skills/NOTICE.md`](skills/NOTICE.md)): the [superpowers](https://github.com/obra/superpowers) chain (brainstorming, writing-plans, executing-plans or subagent-driven-development, test-driven-development, systematic-debugging, verification-before-completion, code review, finishing a branch), five complements from [mattpocock/skills](https://github.com/mattpocock/skills) (grilling, domain-modeling, codebase-design, research, prototype), and the [OpenSpec](https://github.com/Fission-AI/OpenSpec) workflow (openspec-explore, openspec-propose, openspec-apply-change, …) with its `openspec` CLI. Agents load a skill when the task matches it; type `/<name>` (for example `/brainstorming` or `/openspec-propose`) to invoke one yourself. The global `AGENTS.md` tells agents to use OpenSpec in projects with an `openspec/` directory and the brainstorming chain elsewhere.
+
+The launchers hand dsh the skills through `DSH_BUNDLED_SKILL_DIR`, the lowest-priority skill root: a skill with the same name in a project's `.agents/skills/` or `.dsh/skills/`, or in `~/.agents/skills/`, replaces the bundled one. `SNOOPY_SKILLS=0` turns the bundled skills and the `openspec` shim off; a `DSH_BUNDLED_SKILL_DIR` you set yourself wins. Skills appear in the `standard`, `ptc` and `cordis` presets, not in `minimal`.
+
 ### Web tools
 
 The proxy itself gives agents three web tools, so no dsh plugin is needed: `web_fetch` reads one page and returns its main content as Markdown (Readability extraction, charset decoding), `web_crawl` follows a site's links on the same host (breadth first, up to 20 pages), and `web_search` queries a search engine you configure. The proxy runs them server-side, so the dsh UI shows the final answer, not the tool calls. They replace dsh's own `web_search` and `web_fetch` (dsh's search needs a DeepSeek key).
@@ -118,6 +124,7 @@ npm 11 warns that the package's `postinstall` (the proxy download) is not covere
 | `SNOOPY_MCP` | `0` (or `false`, `off`, `no`) drops the default MCP knowledge base (Wikipedia); `RILL_MCP_CONFIG` replaces it. |
 | `SNOOPY_SYSTEM_PROMPT` | `0` (or `false`, `off`, `no`) sends no default system prompt; an explicit `RILL_SYSTEM_PROMPT` replaces it. |
 | `SNOOPY_AGENTS_MD` | `0` (or `false`, `off`, `no`) leaves `$DSH_HOME/AGENTS.md` alone instead of rewriting it with snoopy's working rules. |
+| `SNOOPY_SKILLS` | `0` (or `false`, `off`, `no`) drops the bundled skills and the `openspec` CLI shim; a `DSH_BUNDLED_SKILL_DIR` you set wins. |
 | `RILL_SEARXNG_URL` | SearXNG base URL for `web_search`, e.g. `http://127.0.0.1:8888`. |
 | `BRAVE_SEARCH_API_KEY` | Brave Search API key for `web_search` (used when no SearXNG URL is set). |
 | `SNOOPY_PROXY_LOG` | `1` shows the proxy's startup line and access logs (one line per request) on stderr; off by default. Proxy errors always show. |
@@ -346,6 +353,7 @@ With `/etc/snoopy-proxy/env` holding environment overrides (e.g. `RILL_ADMIN_URL
 - One process, one Ctrl-C: `bin/harness.ts` builds the proxy to `build/proxy` (unless `DSH_PROXY_BIN` names one), waits for `/healthz`, then boots dsh with `DSH_HOME=$PWD/.dsh`; signals reach both.
 - The routing patches `profile/{web,headless,acp}.patch.yml` declare the custom provider `proxy` (OpenAI Chat Completions, `http://127.0.0.1:$SNOOPY_PORT/v1`, model `rill-assistant`, 272k context) and point the `agent-default-model` plugin (and the acp server) at it — no picker click needed. Both launchers layer them with `--patch`; the dev home `.dsh/` is local state and not versioned.
 - `profile/agentic.patch.yml` follows the routing patch in every proxy-routed profile: snoopy's defaults for agentic development. It mounts dsh's clock (`dsh-time-context`, shipped with dsh but in no profile), so the model knows the current date and time (at most one reading every 10 minutes, in the browser's zone or the machine's). Turn it off with `- id: time-context` / `disabled: true` in the profile's `cordis.patch.yml`.
+- `skills/catalog.json` pins each skill source (git commit or npm version) and lists the selected skills; `just skills-sync` fetches them, copies them into `skills/bundled/` (rewriting `superpowers:<name>` references), and regenerates `skills/LICENSES/` and `skills/NOTICE.md`. To update a source, change its `ref`/`commit` (or `version`, together with the `@fission-ai/openspec` dependency), re-run the sync, and review the diff.
 - Model routing edits go in `profile/*.patch.yml`; they apply on the next launch.
 - **Node compatibility.** dsh's native loader only recognizes official nodejs.org builds; Nix/NixOS-compiled Node fails its probe at boot (see [deepseek-harness#690](https://github.com/deepseek-ai/deepseek-harness/discussions/690)). Both launchers prefer `DSH_NODE`, then fnm/nvm installs, then PATH — warning which one they use. On NixOS: `fnm install 24 && fnm use 24`.
 - `node --check bin/launcher.js` + `npm test` run in CI as a Node-side syntax/test gate.
