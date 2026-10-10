@@ -9,7 +9,7 @@ import { accessSync, chmodSync, constants, existsSync, mkdirSync, mkdtempSync, r
 import os from 'node:os'
 import path from 'node:path'
 import { firstFreePort } from '../bin/launcher.js'
-import { portIsFree, waitProxyReady } from '../lib/proxy-ready.js'
+import { portIsFree, proxyStdio, waitProxyReady } from '../lib/proxy-ready.js'
 import { EMPTY_PROFILE_PATCH, LEGACY_PROFILE_PATCHES, MIGRATIONS, migrateDshHome } from '../lib/migrations.js'
 import { agentPresetFromEnv, overlayEnv, PROXY_PROFILES, proxyOverlayArgs, resolvePnpm, selfImproveEnabled } from '../lib/profiles.js'
 import { type NodeCandidate, parseNodeVersion, pickNode } from '../lib/node-select.js'
@@ -264,7 +264,7 @@ test('in acp mode the launcher leaves stdout to the protocol', async () => {
   await new Promise(r => (child.exitCode === null ? child.once('exit', r) : r(undefined)))
   rmSync(dir, { recursive: true, force: true })
   assert.match(stderr, /\[snoopy\] proxy ready/)
-  assert.match(stderr, /GET \/v1\/models 200/) // the readiness probe, logged by the proxy
+  assert.doesNotMatch(stderr, /GET \/v1\/models 200/) // proxy access logs are off by default
   for (const line of stdout.split('\n').filter(Boolean)) {
     assert.doesNotThrow(() => JSON.parse(line), `non-JSON line on stdout: ${line}`)
   }
@@ -318,4 +318,10 @@ test('waitProxyReady resolves once the proxy accepts our key', async () => {
     child.kill()
     await stub.close()
   }
+})
+
+test('proxy access logs are off by default; SNOOPY_PROXY_LOG=1 sends them to stderr', () => {
+  assert.deepEqual(proxyStdio({}), ['ignore', 'ignore', 2]) // errors still reach stderr
+  assert.deepEqual(proxyStdio({ SNOOPY_PROXY_LOG: '0' }), ['ignore', 'ignore', 2])
+  for (const value of ['1', 'true', 'yes']) assert.deepEqual(proxyStdio({ SNOOPY_PROXY_LOG: value }), ['ignore', 2, 2], value)
 })

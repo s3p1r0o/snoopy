@@ -15,7 +15,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/); the project doe
 - **Bundled pnpm.** `pnpm@11.28.0` ships as a dependency and dsh's plugin manager uses it (`SNOOPY_PNPM`) for bundle installs, from the agent tool and the Web Plugins page. dsh now runs with the chosen Node first on `PATH`.
 - **Node ≥ 22.13** (pnpm 11's floor; Node 20 is end-of-life).
 - **Proxy readiness.** Both launchers refuse a fixed port that is already taken, and only call the proxy ready once it accepts this launch's key on `/v1/models` (`/healthz` is open to any proxy): with another snoopy on the port, `just harness` used to declare that proxy ready and dsh then failed with a bare 401.
-- **Stdout belongs to dsh.** Both launchers send their own messages and the proxy's access logs to stderr, so the ACP stream and `snoopy headless` output stay clean.
+- **Stdout belongs to dsh.** Both launchers send their own messages and the proxy's errors to stderr, so the ACP stream and `snoopy headless` output stay clean.
+- **Quiet proxy.** The launchers drop the proxy's startup line and access logs (one line per chat completion) unless `SNOOPY_PROXY_LOG=1`; proxy warnings and errors still show.
 - **Docs.** Drop the `tui` mode: this dsh release ships no terminal UI (`snoopy tui` failed with `profile "tui" does not exist`). `web` and `headless` are the profiles routed through the proxy.
 
 ## [0.1.1] - 2026-10-10

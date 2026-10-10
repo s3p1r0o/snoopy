@@ -17,7 +17,7 @@ import path from 'node:path'
 import process from 'node:process'
 import { collectNodeCandidates, pickNode } from '../lib/node-select.js'
 import { agentPresetFromEnv, overlayEnv, proxyOverlayArgs, resolvePnpm, selfImproveEnabled } from '../lib/profiles.js'
-import { portIsFree, waitProxyReady } from '../lib/proxy-ready.js'
+import { portIsFree, proxyStdio, waitProxyReady } from '../lib/proxy-ready.js'
 
 const ROOT = path.resolve(new URL('./..', import.meta.url).pathname)
 
@@ -71,7 +71,7 @@ async function main(argv: string[]): Promise<void> {
     throw new Error(`port ${port} is already in use (another snoopy running?); set SNOOPY_PORT to another port`)
   }
   const proxy = spawn(proxyBin, ['--port', String(port), '--address', '127.0.0.1'], {
-    stdio: ['ignore', 2, 2],
+    stdio: proxyStdio(process.env), // access logs only with SNOOPY_PROXY_LOG=1
     env: { ...process.env, RILL_PROXY_KEY: proxyKey },
   })
   try {

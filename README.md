@@ -26,7 +26,7 @@ snoopy headless "Reply with the single word: pong" # one-shot task: prints the a
 snoopy acp                                         # Agent Client Protocol server on stdio, for orchestrators
 ```
 
-The first argument names a dsh profile; `web`, `headless` and `acp` are the snoopy routes through the proxy. dsh's other shipped profile (`sdk`) boots without that routing, and this dsh release has no terminal UI. Stdout belongs to dsh (the headless answer, the ACP stream); snoopy's own messages and the proxy's logs go to stderr. Further arguments go to dsh unchanged (`snoopy web --help` lists the web app's flags). New sessions default to `rill-assistant` through the proxy; no model picker step. Profiles and sessions live under `$XDG_DATA_HOME/snoopy/dsh` (by default `~/.local/share/snoopy/dsh`).
+The first argument names a dsh profile; `web`, `headless` and `acp` are the snoopy routes through the proxy. dsh's other shipped profile (`sdk`) boots without that routing, and this dsh release has no terminal UI. Stdout belongs to dsh (the headless answer, the ACP stream); snoopy's own messages and the proxy's errors go to stderr. The proxy's access logs are off unless `SNOOPY_PROXY_LOG=1`. Further arguments go to dsh unchanged (`snoopy web --help` lists the web app's flags). New sessions default to `rill-assistant` through the proxy; no model picker step. Profiles and sessions live under `$XDG_DATA_HOME/snoopy/dsh` (by default `~/.local/share/snoopy/dsh`).
 
 Snoopy's routing ships inside the package (`profile/<name>.patch.yml`) and is layered onto dsh with `--patch` on every launch; it is never copied into your profiles. Each profile's `cordis.patch.yml` is yours, and the agent's when it manages its own plugins. Snoopy's routing wins over it for the fields it sets (provider, base URL, default model).
 
@@ -62,6 +62,7 @@ npm 11 warns that the package's `postinstall` (the proxy download) is not covere
 | `SNOOPY_SELF_IMPROVE` | `0` (or `false`, `off`, `no`) hides the `plugin_manager` tool from agents; on by default. |
 | `DSH_PERMISSION_MODE` | dsh sandbox mode; `danger-full-access` lets `headless` agents run `plugin_manager` without approval. |
 | `DSH_HOME` | dsh home directory (default: `$XDG_DATA_HOME/snoopy/dsh`). |
+| `SNOOPY_PROXY_LOG` | `1` shows the proxy's startup line and access logs (one line per request) on stderr; off by default. Proxy errors always show. |
 | `SNOOPY_PORT` | Fixed proxy port (default: first free port ≥ 8307). |
 | `SNOOPY_PROXY_KEY` | Fixed proxy bearer key instead of the ephemeral one (`RILL_PROXY_KEY` wins if both are set). |
 | `SNOOPY_PROXY_BIN` | Use this proxy binary; skips the download. |
@@ -274,7 +275,7 @@ With `/etc/snoopy-proxy/env` holding environment overrides (e.g. `RILL_ADMIN_URL
 
 - The proxy key (`--key`) protects the proxy, not Rill: calls to Rill remain anonymous unless `--token` is set.
 - The harness boot adds an ephemeral key + loopback bind (nothing secret on the command line, nothing beyond localhost).
-- Access logs (`METHOD PATH STATUS DURATION`) go to stdout; errors go to stderr.
+- Access logs (`METHOD PATH STATUS DURATION`) go to stdout; errors go to stderr. The snoopy launchers drop the access logs unless `SNOOPY_PROXY_LOG=1` (then on stderr); proxy errors always show.
 - Timeouts: 10 s header, 10 min read/write (sized for long upstream completions and SSE), 2 min idle.
 
 ## DeepSeek Harness (dsh) — dev mode details
