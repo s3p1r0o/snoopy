@@ -50,8 +50,12 @@ jobs:
             CGO_ENABLED=0 GOOS="${target%/*}" GOARCH="${target#*/}" go build -trimpath -o /dev/null .
           done
 
+      # The tests resolve the bundled pnpm and dsh: install the dependencies,
+      # without lifecycle scripts (no postinstall proxy download in CI).
       - name: Node side (launcher + package syntax)
         run: |
+          node --version
+          npm ci --ignore-scripts --no-audit --no-fund
           node --check bin/launcher.js
           node --check bin/postinstall.js
           npm test
