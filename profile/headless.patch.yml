@@ -18,3 +18,9 @@
   config:
     provider: proxy
     model: rill-assistant
+
+# dsh's plugin manager (agent tool and Web Plugins page) installs bundles with
+# pnpm: use the one bundled with snoopy (SNOOPY_PNPM), else pnpm from PATH.
+- id: plugin-manager
+  config:
+    pnpmCommand: !!js process.env.SNOOPY_PNPM ?? 'pnpm'

@@ -42,10 +42,11 @@
     "profile/"
   ],
   "dependencies": {
-    "@deepseek-ai/dsh": "0.2.0-rc.2"
+    "@deepseek-ai/dsh": "0.2.0-rc.2",
+    "pnpm": "11.28.0"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22.13"
   },
   "os": [
     "linux",

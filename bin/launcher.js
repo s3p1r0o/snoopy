@@ -32,7 +32,7 @@ import { createRequire } from 'node:module'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { migrateDshHome } from '../lib/migrations.js'
 import { collectNodeCandidates, pickNode } from '../lib/node-select.js'
-import { proxyOverlayArgs } from '../lib/profiles.js'
+import { overlayEnv, proxyOverlayArgs, resolvePnpm, selfImproveEnabled } from '../lib/profiles.js'
 
 const PKG_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const require = createRequire(import.meta.url)
@@ -148,7 +148,7 @@ async function waitHealthy(port, timeoutMs = 10_000) {
 async function main(argv) {
   const chosen = pickNode(collectNodeCandidates())
   if (!chosen) {
-    console.error('[snoopy] no Node runtime found; install Node >= 20 from nodejs.org, or set DSH_NODE.')
+    console.error('[snoopy] no Node runtime found; install Node >= 22.13 from nodejs.org, or set DSH_NODE.')
     process.exitCode = 1
     return
   }
@@ -185,13 +185,19 @@ async function main(argv) {
   const dshHome = process.env.DSH_HOME || path.join(xdgDataHome(), 'snoopy', 'dsh')
   migrateDshHome(dshHome, log)
 
-  const dshArgs = proxyOverlayArgs(argv, path.join(PKG_ROOT, 'profile'))
+  const dshArgs = proxyOverlayArgs(argv, path.join(PKG_ROOT, 'profile'), { selfImprove: selfImproveEnabled(process.env) })
   const child = spawn(chosen.path, [require.resolve('@deepseek-ai/dsh/lib/bin.js'), ...dshArgs], {
     stdio: 'inherit',
     env: {
       ...process.env,
       DSH_HOME: dshHome,
-      SNOOPY_PORT: String(port), // read by the routing patch (profile/*.patch.yml)
+      ...overlayEnv(process.env, {
+        port,
+        nodePath: chosen.path,
+        pnpm: resolvePnpm(require),
+        dshHome: dshHome,
+        profileDir: path.join(PKG_ROOT, 'profile'),
+      }), // read by profile/*.patch.yml
       SNOOPY_PROXY_KEY: proxyKey,
     },
   })

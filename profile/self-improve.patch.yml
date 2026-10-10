@@ -1,0 +1,15 @@
+# Snoopy self-improvement (on by default; SNOOPY_SELF_IMPROVE=0 opts out),
+# layered by the launcher with `--patch` after the routing patch. It turns on
+# the agent-facing plugin_manager tool: the agent can list, enable and disable
+# its profile's plugins and install or remove bundles. Every action still needs
+# approval — the Web user, the acp orchestrator (session/request_permission),
+# or DSH_PERMISSION_MODE=danger-full-access; headless without it refuses.
+# Changes land in the profile's own cordis.patch.yml and package.json.
+- id: tool-plugin-manager
+  disabled: false
+
+# Snoopy's packaged skills (profile/skills, through SNOOPY_SKILLS_DIR), e.g.
+# where agents author their own plugins: $SNOOPY_PLUGINS_DIR, never the workspace.
+- id: skill-filesystem
+  config:
+    customSkillDirs: !!js "[process.env.SNOOPY_SKILLS_DIR]"

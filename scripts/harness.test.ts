@@ -4,12 +4,13 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { createRequire } from 'node:module'
+import { accessSync, chmodSync, constants, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { firstFreePort } from '../bin/launcher.js'
 import { EMPTY_PROFILE_PATCH, LEGACY_PROFILE_PATCHES, MIGRATIONS, migrateDshHome } from '../lib/migrations.js'
-import { PROXY_PROFILES, proxyOverlayArgs } from '../lib/profiles.js'
+import { overlayEnv, PROXY_PROFILES, proxyOverlayArgs, resolvePnpm, selfImproveEnabled } from '../lib/profiles.js'
 import { type NodeCandidate, parseNodeVersion, pickNode } from '../lib/node-select.js'
 
 test('parseNodeVersion extracts a leading version from a `node -v` payload', () => {
@@ -52,18 +53,65 @@ test('pickNode orders versions numerically, not lexicographically', () => {
 
 const PKG_PROFILE_DIR = path.join(import.meta.dirname, '..', 'profile')
 
-test('proxyOverlayArgs layers the packaged routing after the profile name', () => {
-  const overlay = (name: string) => ['--patch', path.join(PKG_PROFILE_DIR, `${name}.patch.yml`)]
-  assert.deepEqual(proxyOverlayArgs(['acp'], PKG_PROFILE_DIR), ['acp', ...overlay('acp')])
-  assert.deepEqual(proxyOverlayArgs(['web', '--no-open'], PKG_PROFILE_DIR), ['web', ...overlay('web'), '--no-open'])
-  assert.deepEqual(proxyOverlayArgs(['--profile', 'headless', 'task'], PKG_PROFILE_DIR), ['--profile', 'headless', ...overlay('headless'), 'task'])
-  assert.deepEqual(proxyOverlayArgs(['--profile=acp'], PKG_PROFILE_DIR), ['--profile=acp', ...overlay('acp')])
+const overlay = (name: string) => ['--patch', path.join(PKG_PROFILE_DIR, `${name}.patch.yml`)]
+const SELF_IMPROVE = overlay('self-improve')
+
+test('proxyOverlayArgs layers the packaged routing and self-improvement after the profile name', () => {
+  const on = { selfImprove: true }
+  assert.deepEqual(proxyOverlayArgs(['acp'], PKG_PROFILE_DIR, on), ['acp', ...overlay('acp'), ...SELF_IMPROVE])
+  assert.deepEqual(proxyOverlayArgs(['web', '--no-open'], PKG_PROFILE_DIR, on), ['web', ...overlay('web'), ...SELF_IMPROVE, '--no-open'])
+  assert.deepEqual(proxyOverlayArgs(['--profile', 'headless', 'task'], PKG_PROFILE_DIR, on), ['--profile', 'headless', ...overlay('headless'), ...SELF_IMPROVE, 'task'])
+  assert.deepEqual(proxyOverlayArgs(['--profile=acp'], PKG_PROFILE_DIR, on), ['--profile=acp', ...overlay('acp'), ...SELF_IMPROVE])
+})
+
+test('proxyOverlayArgs keeps the routing but drops self-improvement when opted out', () => {
+  assert.deepEqual(proxyOverlayArgs(['acp', 'x'], PKG_PROFILE_DIR, { selfImprove: false }), ['acp', ...overlay('acp'), 'x'])
 })
 
 test('proxyOverlayArgs leaves other invocations alone', () => {
   for (const argv of [[], ['--help'], ['sdk'], ['plugin', '--profile', 'web', 'add', 'x']]) {
-    assert.deepEqual(proxyOverlayArgs(argv, PKG_PROFILE_DIR), argv)
+    assert.deepEqual(proxyOverlayArgs(argv, PKG_PROFILE_DIR, { selfImprove: true }), argv)
   }
+})
+
+test('self-improvement is on unless SNOOPY_SELF_IMPROVE opts out', () => {
+  assert.equal(selfImproveEnabled({}), true)
+  for (const value of ['1', 'true', 'yes', '']) assert.equal(selfImproveEnabled({ SNOOPY_SELF_IMPROVE: value }), true, value)
+  for (const value of ['0', 'false', 'FALSE', 'off', 'no']) assert.equal(selfImproveEnabled({ SNOOPY_SELF_IMPROVE: value }), false, value)
+})
+
+test('the self-improvement patch turns on the agent-facing plugin_manager tool', () => {
+  const patch = readFileSync(path.join(PKG_PROFILE_DIR, 'self-improve.patch.yml'), 'utf8')
+  assert.match(patch, /- id: tool-plugin-manager\n\s+disabled: false/)
+})
+
+test('overlayEnv hands dsh the port, pnpm, skills and plugins dirs, and the chosen Node first on PATH', () => {
+  const options = { port: 8307, nodePath: '/opt/node/bin/node', pnpm: '/pkg/pnpm.mjs', dshHome: '/home/u/dsh', profileDir: '/pkg/profile' }
+  assert.deepEqual(overlayEnv({ PATH: '/usr/bin' }, options), {
+    SNOOPY_PORT: '8307',
+    PATH: ['/opt/node/bin', '/usr/bin'].join(path.delimiter),
+    SNOOPY_PNPM: '/pkg/pnpm.mjs',
+    SNOOPY_SKILLS_DIR: path.join('/pkg/profile', 'skills'),
+    SNOOPY_PLUGINS_DIR: path.join('/home/u/dsh', 'plugins'),
+  })
+  const { SNOOPY_PNPM, PATH } = overlayEnv({}, { ...options, pnpm: undefined })
+  assert.equal(SNOOPY_PNPM, undefined)
+  assert.equal(PATH, '/opt/node/bin')
+})
+
+test('self-improvement loads the packaged skills, which keep authored plugins out of the workspace', () => {
+  const patch = readFileSync(path.join(PKG_PROFILE_DIR, 'self-improve.patch.yml'), 'utf8')
+  assert.match(patch, /- id: skill-filesystem\n\s+config:\n\s+customSkillDirs: !!js .*process\.env\.SNOOPY_SKILLS_DIR/)
+  const skill = readFileSync(path.join(PKG_PROFILE_DIR, 'skills', 'dsh-plugin-authoring', 'SKILL.md'), 'utf8')
+  assert.match(skill, /^---\nname: dsh-plugin-authoring\ndescription: .+\n/)
+  assert.match(skill, /\$SNOOPY_PLUGINS_DIR/)
+})
+
+test('resolvePnpm finds the bundled, executable pnpm', () => {
+  const pnpm = resolvePnpm(createRequire(import.meta.url))
+  assert.ok(pnpm && existsSync(pnpm), String(pnpm))
+  accessSync(pnpm, constants.X_OK)
+  assert.match(readFileSync(path.join(path.dirname(pnpm), '..', 'package.json'), 'utf8'), /"name": "pnpm"/)
 })
 
 test('every proxy-routed profile ships a routing patch that reads the port from the environment', () => {
@@ -71,6 +119,8 @@ test('every proxy-routed profile ships a routing patch that reads the port from 
     const patch = readFileSync(path.join(PKG_PROFILE_DIR, `${name}.patch.yml`), 'utf8')
     assert.match(patch, /baseURL: !!js .*process\.env\.SNOOPY_PORT/)
     assert.match(patch, /- id: agent-default-model\n\s+config:\n\s+provider: proxy\n\s+model: rill-assistant/)
+    // The Web Plugins page installs bundles too: pnpm is wired with the routing, not the opt-out.
+    assert.match(patch, /- id: plugin-manager\n\s+config:\n\s+pnpmCommand: !!js .*process\.env\.SNOOPY_PNPM/)
   }
   // dsh-acp-app pins every ACP session to deepseek-official/deepseek-v4-flash
   // on its `acp` entry; the routing patch must override that entry itself.

@@ -10,7 +10,7 @@ The proxy fronts the upstream LLM behind Rill Cloud's AI service (`admin.rilldat
 
 ## Install
 
-Requirements: Linux or macOS on x64 or arm64, and Node ≥ 20 from an official nodejs.org build (nvm, fnm or the installer). dsh's native loader rejects distro and Nix builds of Node.
+Requirements: Linux or macOS on x64 or arm64, and Node ≥ 22.13 from an official nodejs.org build (nvm, fnm or the installer). dsh's native loader rejects distro and Nix builds of Node.
 
 ```sh
 npm install -g @s3p1r0o/snoopy
@@ -34,6 +34,16 @@ Snoopy's routing ships inside the package (`profile/<name>.patch.yml`) and is la
 
 `snoopy acp` serves the standard [Agent Client Protocol](https://agentclientprotocol.com) v1 over JSON-RPC on stdin/stdout: an orchestrator spawns one process per agent and calls `initialize`, `session/new` (absolute `cwd`, MCP servers), `session/prompt`, then `session/close`; sessions persist under the dsh home and can be listed and resumed. Every session uses `rill-assistant` through the proxy (the acp bundle's own default, `deepseek-official`/`deepseek-v4-flash`, is overridden). The server can ask the client for permission (`session/request_permission`), so the orchestrator must answer those requests. Each process starts its own proxy on a free port.
 
+### Self-improvement
+
+Snoopy agents can improve themselves; `SNOOPY_SELF_IMPROVE=0` turns the plugin part off.
+
+- **Skills.** An agent can write `.agents/skills/<name>/SKILL.md` (YAML frontmatter `name` and `description`, then instructions) in its workspace; later sessions discover it without a restart. dsh also scans `<dsh home>/skills` and `.dsh/skills`.
+- **Plugins and bundles.** The `plugin_manager` tool lets the agent list, enable and disable its profile's plugins, and install or remove bundles (with the pnpm bundled in snoopy). Changes land in the profile's own `cordis.patch.yml` and `package.json` and apply on the next launch (the Web app reloads them live).
+- **Authored plugins.** A packaged skill (`profile/skills/dsh-plugin-authoring`) tells agents to create their own plugins under `<dsh home>/plugins/<name>/` (`$SNOOPY_PLUGINS_DIR`), never in the workspace or a repository, and to install them with `plugin_manager`. In dev mode that is `.dsh/plugins/`, ignored by git.
+- **Approval.** Every `plugin_manager` action needs approval: in `web` the user approves in the UI; in `acp` the orchestrator receives `session/request_permission`; `headless` refuses unless `DSH_PERMISSION_MODE=danger-full-access`. Installed bundles run as host code, outside the workspace sandbox.
+- **Fleets.** Agents sharing a dsh home share its profiles: one agent's plugin change reaches every agent on that home. Give each agent its own `DSH_HOME` to keep them apart. Outside `web`, a change takes effect when the orchestrator restarts the agent.
+
 ### Upgrading
 
 `npm install -g @s3p1r0o/snoopy@latest` replaces the launcher and fetches the proxy binary of the new version (the old one goes with the old package). The routing comes from the installed package, so it updates along. Anything else in the dsh home is upgraded by versioned migrations, applied once on the first launch and recorded in `snoopy-migrations.json`. A migration changes a file only when it recognizes what snoopy wrote there, and leaves a `.pre-<migration>` backup when it keeps your own entries around it.
@@ -48,6 +58,8 @@ npm 11 warns that the package's `postinstall` (the proxy download) is not covere
 | -------- | ------ |
 | `RILL_ADMIN_TOKEN` | Bearer token sent to Rill. Unset: calls to Rill are anonymous. |
 | `RILL_SYSTEM_PROMPT`, `RILL_ADMIN_URL`, … | Passed through to the proxy (see [Proxy configuration](#proxy-configuration)). |
+| `SNOOPY_SELF_IMPROVE` | `0` (or `false`, `off`, `no`) hides the `plugin_manager` tool from agents; on by default. |
+| `DSH_PERMISSION_MODE` | dsh sandbox mode; `danger-full-access` lets `headless` agents run `plugin_manager` without approval. |
 | `DSH_HOME` | dsh home directory (default: `$XDG_DATA_HOME/snoopy/dsh`). |
 | `SNOOPY_PORT` | Fixed proxy port (default: first free port ≥ 8307). |
 | `SNOOPY_PROXY_KEY` | Fixed proxy bearer key instead of the ephemeral one (`RILL_PROXY_KEY` wins if both are set). |
@@ -64,8 +76,8 @@ npm 11 warns that the package's `postinstall` (the proxy download) is not covere
 ├── lib/node-select.js shared official-vs-distro Node selection
 ├── lib/profiles.js   proxy-routed profiles and the --patch routing overlay
 ├── lib/migrations.js versioned dsh-home migrations (append-only)
-├── profile/          routing patches (web, headless, acp), layered with --patch by both launchers
-└── .dsh/profiles/    repo-local dsh profiles: the repo's own user layer (git-tracked)
+├── profile/          routing patches (web, headless, acp) + self-improve.patch.yml, layered with --patch
+└── .dsh/profiles/    repo-local dsh profiles: only each cordis.patch.yml (the repo's user layer) is git-tracked
 ```
 
 ```sh

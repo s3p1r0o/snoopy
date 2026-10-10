@@ -20,6 +20,12 @@
     provider: proxy
     model: rill-assistant
 
+# dsh's plugin manager (agent tool and Web Plugins page) installs bundles with
+# pnpm: use the one bundled with snoopy (SNOOPY_PNPM), else pnpm from PATH.
+- id: plugin-manager
+  config:
+    pnpmCommand: !!js process.env.SNOOPY_PNPM ?? 'pnpm'
+
 # dsh-acp-app pins every ACP session to provider deepseek-official / model
 # deepseek-v4-flash on this entry; route it to the proxy instead.
 - id: acp

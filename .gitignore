@@ -9,4 +9,8 @@ bin/proxy
 .dsh/logs/
 .dsh/.credentials.yaml
 .dsh/storages/
-.dsh/profiles/*/.plugin-manager/
+# dsh profiles: only the repo's own user layer is versioned; dsh regenerates
+# the rest at boot, and plugin installs rewrite it (package.json, lockfile, …).
+.dsh/profiles/*/*
+!.dsh/profiles/*/cordis.patch.yml
+.dsh/plugins/

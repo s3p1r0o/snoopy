@@ -16,7 +16,7 @@ import { createRequire } from 'node:module'
 import path from 'node:path'
 import process from 'node:process'
 import { collectNodeCandidates, pickNode } from '../lib/node-select.js'
-import { proxyOverlayArgs } from '../lib/profiles.js'
+import { overlayEnv, proxyOverlayArgs, resolvePnpm, selfImproveEnabled } from '../lib/profiles.js'
 
 const ROOT = path.resolve(new URL('./..', import.meta.url).pathname)
 
@@ -90,7 +90,7 @@ async function main(argv: string[]): Promise<void> {
 
   // Same routing overlay as the published launcher; .dsh/profiles/*/cordis.patch.yml
   // only holds the repo's own settings.
-  const dshArgs = proxyOverlayArgs(argv, path.join(ROOT, 'profile'))
+  const dshArgs = proxyOverlayArgs(argv, path.join(ROOT, 'profile'), { selfImprove: selfImproveEnabled(process.env) })
   const child = spawn(chosen.path, [require.resolve('@deepseek-ai/dsh/lib/bin.js'), ...dshArgs], {
     stdio: 'inherit',
     // dsh requires a credential for the provider route even when the proxy
@@ -99,7 +99,13 @@ async function main(argv: string[]): Promise<void> {
     env: {
       ...process.env,
       DSH_HOME: path.join(ROOT, '.dsh'),
-      SNOOPY_PORT: String(port), // read by the routing patch (profile/*.patch.yml)
+      ...overlayEnv(process.env, {
+        port,
+        nodePath: chosen.path,
+        pnpm: resolvePnpm(require),
+        dshHome: path.join(ROOT, '.dsh'),
+        profileDir: path.join(ROOT, 'profile'),
+      }), // read by profile/*.patch.yml
       SNOOPY_PROXY_KEY: proxyKey,
     },
   })

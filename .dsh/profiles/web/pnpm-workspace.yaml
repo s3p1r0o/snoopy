@@ -1,6 +1,0 @@
-packages:
-  - .
-  - pet-plugin
-
-nodeLinker: hoisted
-autoInstallPeers: false
